@@ -1,0 +1,100 @@
+# AutoRAG 최적화 설정 (수정판 v2)
+# 한국 법령 RAG 포트폴리오 — 로컬 Ollama + bge-m3 환경
+#
+# 목표: Phase 2~7 수동 튜닝 결과와 비교해 자동 최적화 효과 측정
+# 측정 메트릭: retrieval_f1, retrieval_recall, bleu
+#
+# 파이프라인:
+#   retrieval_line: lexical_retrieval → semantic_retrieval → hybrid_retrieval
+#   generation_line: passage_reranker → prompt_maker → generator
+
+vectordb:
+  - name: law_chroma
+    db_type: chroma
+    client_type: persistent
+    embedding_model: huggingface_bge_m3
+    similarity_metric: cosine
+    collection_name: autorag_law
+    path: ./data/autorag/chroma_store
+    embedding_batch: 16
+
+node_lines:
+  - node_line_name: retrieval_line
+    nodes:
+      # 1. BM25 (한국어 kiwipiepy 토크나이저)
+      - node_type: lexical_retrieval
+        strategy:
+          metrics:
+            - retrieval_f1
+            - retrieval_recall
+          top_k: 5
+        modules:
+          - module_type: bm25
+            bm25_tokenizer: ko_kiwi
+            top_k: 5
+
+      # 2. 벡터 검색 (bge-m3)
+      - node_type: semantic_retrieval
+        strategy:
+          metrics:
+            - retrieval_f1
+            - retrieval_recall
+          top_k: 5
+        modules:
+          - module_type: vectordb
+            vectordb: law_chroma
+            top_k: 5
+
+      # 3. Hybrid RRF (BM25 + Vector) — weight 자동 탐색
+      - node_type: hybrid_retrieval
+        strategy:
+          metrics:
+            - retrieval_f1
+            - retrieval_recall
+          top_k: 5
+        modules:
+          - module_type: hybrid_rrf
+            top_k: 5
+            # weight_range 생략 → 기본값 (4, 80) 사용
+
+  - node_line_name: generation_line
+    nodes:
+      # Reranking 단계
+      - node_type: passage_reranker
+        strategy:
+          metrics:
+            - retrieval_f1
+          top_k: 5
+        modules:
+          # Reranker 없음 (기준선)
+          - module_type: pass_reranker
+            top_k: 5
+
+          # BGE Reranker v2-m3 (다국어, Phase 5 이후 사용 중)
+          - module_type: flag_embedding_reranker
+            model_name: BAAI/bge-reranker-v2-m3
+            top_k: 5
+
+      # 프롬프트 생성
+      - node_type: prompt_maker
+        strategy:
+          metrics:
+            - bleu
+        modules:
+          - module_type: fstring
+            prompt: "당신은 한국 법령 전문가입니다. 아래 법령 조문을 참고하여 질문에 정확하게 답변하세요. 법령에 없는 내용은 '관련 조문을 찾을 수 없습니다'라고 답하세요. 추측하지 마세요.\n\n[참고 조문]\n{retrieved_contents}\n\n[질문]\n{query}\n\n[답변]"
+
+      # 생성 단계
+      - node_type: generator
+        strategy:
+          metrics:
+            - bleu
+            - meteor
+        modules:
+          - module_type: llama_index_llm
+            llm: openailike          # Ollama OpenAI 호환 API 사용
+            model: exaone3.5:7.8b
+            api_base: http://localhost:11434/v1
+            api_key: ollama          # 더미 키 (Ollama는 키 불필요)
+            temperature: 0.1
+            batch: 1                 # Ollama 병렬 처리 불가 → 1 고정

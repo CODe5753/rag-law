@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.env
+.DS_Store
+
+# 평가 데이터 (큰 파일, 데모에 불필요)
+data/autorag/
+data/raw/
+data/logs/
+data/processed/ragas_*.json
+data/processed/benchmark_*.json
+data/processed/eval_qa_v2.json
+data/processed/stats.json
+
+# 기타
+evaluation/
+*.egg-info/
+.omc/

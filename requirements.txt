@@ -1,0 +1,44 @@
+# ── 실제 설치된 버전 (2026-04-10 기준) ──────────────────────────────
+# 주의: LangChain 버전은 0.3.x가 아닌 1.2.x로 설치됨
+# 초안 가이드의 버전 목록과 다름 — 실제 동작 확인된 버전으로 기록
+
+# OpenAI
+openai==2.31.0
+
+# LangChain 스택
+langchain==1.2.15
+langchain-community==0.3.31
+langchain-core==1.2.28
+langchain-ollama==0.2.0
+langchain-openai==1.1.12
+langchain-text-splitters==0.3.8
+
+# LangGraph (Phase 7 CRAG)
+langgraph==1.1.6
+langgraph-checkpoint==4.0.1
+langgraph-prebuilt==1.0.9
+langgraph-sdk==0.3.13
+
+# 벡터 DB
+chromadb==0.5.20        # Phase 2~5
+qdrant-client==1.17.1   # Phase 6~8 (search() 제거됨 → query_points() 사용)
+
+# 임베딩 & Re-ranking
+sentence-transformers==3.0.1  # bge-m3, bge-reranker-v2-m3
+
+# 한국어 형태소 분석 (BM25)
+kiwipiepy==0.23.1
+rank-bm25==0.2.2
+
+# 평가
+ragas==0.4.3
+datasets==4.8.4
+
+# 유틸
+python-dotenv==1.0.1
+rich==13.7.1
+requests==2.33.1
+tiktoken==0.12.0
+
+# 선택 (Phase 7 웹 검색 fallback)
+# tavily-python==0.3.3  # TAVILY_API_KEY 설정 시 활성화

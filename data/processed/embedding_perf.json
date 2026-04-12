@@ -1,0 +1,9 @@
+{
+  "model": "BAAI/bge-m3",
+  "total_chunks": 7665,
+  "batch_size": 64,
+  "elapsed_sec": 167.7,
+  "chunks_per_sec": 45.7,
+  "peak_cpu_pct": 790.1,
+  "peak_ram_mb": 2032.2
+}

@@ -1,0 +1,84 @@
+{
+  "question": "상법상 주식회사 설립 시 이사회 구성 요건은?",
+  "answer": "수집된 법령 데이터에서 '상법상 주식회사 설립 시 이사회 구성 요건은?'에 대한 충분한 관련 조문을 찾을 수 없습니다. 법제처(law.go.kr) 또는 전문가에게 문의하세요.",
+  "pipeline": "crag",
+  "latency_sec": 1.5,
+  "cached": true,
+  "retrieved_docs": [
+    {
+      "law_name": "신용정보법",
+      "article_num": "제40조의2",
+      "text": "으로 신용정보회사, 본인신용정보관리회사 및 채권추심회사의 의결권 있는 발행주식 총수의 100분의 10 이상의 주식(그 주식과 관련된 증권예탁증권을 포함한다)을 소유한 자\n\n2) 임원[이사, 감사, 집행임원(「상법」",
+      "reranker_score": 0.0792,
+      "is_relevant": false
+    },
+    {
+      "law_name": "신용정보법",
+      "article_num": "제25조",
+      "text": ".>\n\n1. 제1항제1호에 따른 자\n\n2. 제1항제2호부터 제6호까지의 규정에 따른 자\n\n3. 「상법」에 따라 설립된 주식회사\n\n4. 기술신용평가업무의 특성, 법인의 설립 목적 등을 고려하여 대통령령으로 정하는 법인\n\n④ 제3항에도 불구하고 다음 각 호의 어느 하나에 해당하는 자는",
+      "reranker_score": 0.0406,
+      "is_relevant": false
+    },
+    {
+      "law_name": "공정거래법",
+      "article_num": "제18조(지주회사 등의 행위제한 등)",
+      "text": "보유할 수 있다.\n\n2. 자회사의 주식을 그 자회사 발행주식총수의 100분의 50[자회사가 상장법인인 경우, 주식 소유의 분산요건 등 상장요건이 「자본시장과 금융투자업에 관한 법률」에 따른 증권시장으로서 대통령령으로 정하는 국내 증권시장의 상장요건에 상당하는 것으로 공정거래위원회가 고시하는 국외 증권거래소에 상장된 법인(이하 “국외상장법인”이라 한다)인",
+      "reranker_score": 0.01,
+      "is_relevant": false
+    },
+    {
+      "law_name": "전자금융거래법",
+      "article_num": "제28조",
+      "text": "제28조제1항의 규정에 따라 허가를 받고자 하는 자는 주식회사로서 자본금이 50억원 이상이어야 한다.\n\n②",
+      "reranker_score": 0.009,
+      "is_relevant": false
+    },
+    {
+      "law_name": "전자금융거래법",
+      "article_num": "제28조",
+      "text": "제28조제1항의 규정에 따라 허가를 받고자 하는 자는 주식회사로서 자본금이 50억원 이상이어야 한다.\n\n②",
+      "reranker_score": 0.009,
+      "is_relevant": false
+    },
+    {
+      "law_name": "소비자기본법",
+      "article_num": "제40조(이사회)",
+      "text": "제40조(이사회) ①한국소비자원의 업무와 운영에 관한 중요사항을 심의ㆍ의결하기 위하여 한국소비자원에 이사회를 둔다.\n\n②이사회는 원장ㆍ부원장ㆍ소장 그 밖의 이사로 구성한다.\n\n③원장은 이사회를 소집하고 이사회의 의장이 된다.\n\n④감사는 이사회에 출석하여 의견을 진술할 수 있다.\n\n        제3절 회계ㆍ감독 등",
+      "reranker_score": 0.0085,
+      "is_relevant": false
+    },
+    {
+      "law_name": "공정거래법",
+      "article_num": "제161조",
+      "text": "래행위를 하는 경우에는 제1항에도 불구하고 이사회의 의결을 거치지 아니할 수 있다. 이 경우 그 거래내용은 공시하여야 한다.\n\n⑤ 제1항의 경우에 상장법인이 「상법」",
+      "reranker_score": 0.0079,
+      "is_relevant": false
+    },
+    {
+      "law_name": "공정거래법",
+      "article_num": "제16조",
+      "text": "계열회사(상장법인으로 한정한다)의 주주총회에서 다음 각 목의 어느 하나에 해당하는 사항을 결의하는 경우. 이 경우 그 계열회사의 주식 중 의결권을 행사할 수 있는 주식의 수는 그 계열회사에 대하여 특수관계인 중 대통령령으로 정하는 자를 제외한 자가 행사할 수 있는 주식수를 합하여 그 계열회사 발행주식총수의 100분의 15를 초과할 수 없다.\n\n가. 임원의",
+      "reranker_score": 0.003,
+      "is_relevant": false
+    }
+  ],
+  "pipeline_trace": {
+    "nodes_executed": [
+      "retrieve",
+      "grade_documents",
+      "fallback"
+    ],
+    "decision": "fallback",
+    "grading_summary": {
+      "total_docs": 8,
+      "relevant_docs": 0,
+      "threshold": 0.5,
+      "graded_by": "reranker"
+    }
+  },
+  "hardware_info": {
+    "model": "exaone3.5:7.8b",
+    "device": "Mac Mini M2 16GB",
+    "inference": "Ollama (local)"
+  }
+}

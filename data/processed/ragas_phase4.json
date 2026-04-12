@@ -1,0 +1,8 @@
+{
+  "phase": "Phase4_LangChain",
+  "eval_time_sec": 251.3,
+  "faithfulness": 0.8833,
+  "answer_relevancy": 0.95,
+  "context_recall": 0.7167,
+  "context_precision": 0.71
+}

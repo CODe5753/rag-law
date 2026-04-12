@@ -1,0 +1,68 @@
+{
+  "total_chunks": 7665,
+  "avg_char_len": 108.6,
+  "chunk_size": 200,
+  "overlap": 20,
+  "laws": [
+    {
+      "law": "개인정보보호법",
+      "articles": 591,
+      "chunks": 885,
+      "avg_chars": 120.1
+    },
+    {
+      "law": "근로기준법",
+      "articles": 445,
+      "chunks": 564,
+      "avg_chars": 103.7
+    },
+    {
+      "law": "소비자기본법",
+      "articles": 337,
+      "chunks": 466,
+      "avg_chars": 116.4
+    },
+    {
+      "law": "저작권법",
+      "articles": 548,
+      "chunks": 839,
+      "avg_chars": 122.8
+    },
+    {
+      "law": "전자금융거래법",
+      "articles": 408,
+      "chunks": 577,
+      "avg_chars": 112.4
+    },
+    {
+      "law": "전자상거래법",
+      "articles": 340,
+      "chunks": 458,
+      "avg_chars": 110.1
+    },
+    {
+      "law": "정보통신망법",
+      "articles": 810,
+      "chunks": 1174,
+      "avg_chars": 113.6
+    },
+    {
+      "law": "신용정보법",
+      "articles": 677,
+      "chunks": 929,
+      "avg_chars": 105.4
+    },
+    {
+      "law": "금융소비자보호법",
+      "articles": 395,
+      "chunks": 539,
+      "avg_chars": 107.2
+    },
+    {
+      "law": "공정거래법",
+      "articles": 996,
+      "chunks": 1234,
+      "avg_chars": 85.9
+    }
+  ]
+}

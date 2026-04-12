@@ -1,0 +1,57 @@
+{
+  "question": "주택임대차보호법에서 계약갱신청구권의 행사 기간은?",
+  "answer": "관련 조문을 찾을 수 없습니다. 제공된 법령 조문들 중 주택임대차보호법에 대한 내용은 포함되어 있지 않으며, 계약갱신청구권의 구체적인 행사 기간에 대한 정보도 포함되어 있지 않습니다. 주택임대차보호법에 대한 정확한 답변을 위해서는 해당 법령의 관련 조문을 직접 참조해야 합니다.",
+  "pipeline": "qdrant",
+  "latency_sec": 14.9,
+  "cached": true,
+  "retrieved_docs": [
+    {
+      "law_name": "금융소비자보호법",
+      "article_num": "제52조",
+      "text": "할 수 없을 경우에는 30일의 범위에서 그 기간을 연장할 수 있다.",
+      "reranker_score": 0.033,
+      "is_relevant": true
+    },
+    {
+      "law_name": "공정거래법",
+      "article_num": "제96조(이의신청)",
+      "text": "우에는 30일의 범위에서 결정으로 그 기간을 연장할 수 있다.",
+      "reranker_score": 0.0229,
+      "is_relevant": true
+    },
+    {
+      "law_name": "근로기준법",
+      "article_num": "제53조",
+      "text": "제53조제3항 및 제6항의 개정규정은 2022년 12월 31일까지 효력을 가진다.",
+      "reranker_score": 0.0204,
+      "is_relevant": true
+    },
+    {
+      "law_name": "전자상거래법",
+      "article_num": "제2조",
+      "text": "다르거나 계약내용과 다르게 이행된 경우에는 그 재화등을 공급받은 날부터 3개월 이내, 그 사실을 안 날 또는 알 수 있었던 날부터 30일 이내에 청약철회등을 할 수 있다.\n\n④ 제1항 또는 제3항에 따른 청약철회등을 서면으로 하는 경우에는 그 의사표시가 적힌 서면을 발송한 날에 그 효력이 발생한다.\n\n⑤ 제1항부터 제3항까지의 규정을 적용할 때 재화등의 훼",
+      "reranker_score": 0.0199,
+      "is_relevant": true
+    },
+    {
+      "law_name": "금융소비자보호법",
+      "article_num": "제21조",
+      "text": "② 금융소비자는 금융상품판매업자등이 정당한 사유 없이 제1항의 요구를 따르지 않는 경우 해당 계약을 해지할 수 있다.\n\n③ 제1항 및 제2항에 따라 계약이 해지된 경우 금융상품판매업자등은 수수료, 위약금 등 계약의 해지와 관련된 비용을 요구할 수 없다.\n\n④ 제1항부터 제3항까지의 규정에 따른 계약의 해지요구권의 행사요건, 행사범위 및 정당한 사유 등과",
+      "reranker_score": 0.0139,
+      "is_relevant": true
+    }
+  ],
+  "pipeline_trace": {
+    "nodes_executed": [
+      "retrieve",
+      "generate"
+    ],
+    "decision": "generate",
+    "grading_summary": null
+  },
+  "hardware_info": {
+    "model": "exaone3.5:7.8b",
+    "device": "Mac Mini M2 16GB",
+    "inference": "Ollama (local)"
+  }
+}
