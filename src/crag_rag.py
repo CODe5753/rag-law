@@ -27,8 +27,14 @@ from pathlib import Path
 from typing import TypedDict, Literal
 
 import requests
-from sentence_transformers import SentenceTransformer
 from langgraph.graph import StateGraph, END
+import embedding_backend
+
+# sentence_transformers/torch는 local 모드일 때만 import (메모리 절감)
+if not embedding_backend.is_ollama_backend():
+    from sentence_transformers import SentenceTransformer
+else:
+    SentenceTransformer = None
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
@@ -96,6 +102,8 @@ _bge_reranker = None
 
 def _get_model():
     global _model
+    if embedding_backend.is_ollama_backend():
+        return None
     if _model is None:
         print(f"[임베딩] 모델 로드: {EMBED_MODEL_NAME}")
         t0 = time.time()
@@ -132,6 +140,9 @@ def _get_bm25():
 
 def _get_bge_reranker():
     global _bge_reranker
+    import os
+    if os.getenv("RERANKER_BACKEND", "local") == "remote":
+        return None  # qdrant_rag.rerank()이 remote 서비스 호출
     if _bge_reranker is None:
         try:
             from sentence_transformers import CrossEncoder
@@ -183,7 +194,6 @@ def retrieve(state: CRAGState) -> CRAGState:
     model = _get_model()
     chunks = _get_chunks()
     bm25, chunk_ids = _get_bm25()
-    reranker = _get_bge_reranker()
 
     # CRAG는 더 많은 후보를 채점하기 위해 top_k_candidate를 늘림
     docs = hybrid_retrieve(

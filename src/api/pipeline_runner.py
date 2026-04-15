@@ -15,20 +15,9 @@ if str(_SRC) not in sys.path:
 
 from api.schemas import QueryResponse, RetrievedDoc, PipelineTrace, GradingSummary
 
-# ── Qdrant 파이프라인 싱글턴 ────────────────────────────────
-_qdrant_model = None
-_qdrant_chunks = None
-_qdrant_bm25 = None
-_qdrant_chunk_ids = None
-
-
-def _init_qdrant():
-    global _qdrant_model, _qdrant_chunks, _qdrant_bm25, _qdrant_chunk_ids
-    if _qdrant_model is None:
-        from qdrant_rag import load_chunks, load_embed_model, build_bm25
-        _qdrant_chunks = load_chunks()
-        _qdrant_model = load_embed_model()
-        _qdrant_bm25, _qdrant_chunk_ids = build_bm25(_qdrant_chunks)
+# ── Qdrant 파이프라인: 요청별 로드 (싱글턴 제거) ─────────────
+# BM25 pickle(2MB)이 0.0s 로드라 싱글턴으로 유지할 필요 없음.
+# 요청 후 Python GC가 메모리 해제 → 704Mi → ~71Mi (idle)
 
 
 # ── CRAG 실행 ────────────────────────────────────────────────
@@ -91,19 +80,27 @@ def run_crag(question: str) -> QueryResponse:
 # ── Qdrant 실행 ──────────────────────────────────────────────
 
 def run_qdrant(question: str) -> QueryResponse:
-    from qdrant_rag import hybrid_retrieve, generate
+    from qdrant_rag import load_chunks, load_embed_model, build_bm25, hybrid_retrieve, generate
 
-    _init_qdrant()
+    # 요청마다 로드 후 함수 종료 시 GC 해제 (pickle 0.0s, 메모리 반환)
+    chunks = load_chunks()
+    model = load_embed_model()
+    bm25, chunk_ids = build_bm25(chunks)
 
     t0 = time.time()
-    docs = hybrid_retrieve(
-        question,
-        _qdrant_model,
-        _qdrant_chunks,
-        _qdrant_bm25,
-        _qdrant_chunk_ids,
-    )
-    gen = generate(question, docs)
+    try:
+        docs = hybrid_retrieve(
+            question,
+            model,
+            chunks,
+            bm25,
+            chunk_ids,
+        )
+        gen = generate(question, docs)
+    finally:
+        # 요청 완료 후 Kiwi 싱글턴 해제 → GC가 ~150MB 회수
+        import qdrant_rag as _qr
+        _qr._kiwi = None
     latency = round(time.time() - t0, 1)
 
     retrieved_docs = [

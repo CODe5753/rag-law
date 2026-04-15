@@ -20,18 +20,27 @@ from pathlib import Path
 from collections import defaultdict
 
 import requests
-from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
+import embedding_backend
+
+# sentence_transformers/torch는 local 모드일 때만 import (메모리 절감)
+if not embedding_backend.is_ollama_backend():
+    from sentence_transformers import SentenceTransformer
+else:
+    SentenceTransformer = None
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
-QDRANT_PATH = Path("./qdrant_data")
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 CHUNKS_PATH = Path("data/processed/chunks.json")
 EMBED_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 COLLECTION_NAME = "law_chunks_v1"
 OUT_DIR = Path("data/processed")
+RERANKER_BACKEND = os.getenv("RERANKER_BACKEND", "local")  # "remote" | "local"
+RERANKER_HOST = os.getenv("RERANKER_HOST", "http://localhost:11435")
 
 TOP_K_CANDIDATE = 20
 TOP_K_FINAL = 5
@@ -107,7 +116,10 @@ def load_chunks() -> list[dict]:
     return json.loads(CHUNKS_PATH.read_text(encoding="utf-8"))
 
 
-def load_embed_model() -> SentenceTransformer:
+def load_embed_model():
+    if embedding_backend.is_ollama_backend():
+        print(f"[임베딩] Ollama 백엔드 사용: {embedding_backend.OLLAMA_EMBEDDING_MODEL}")
+        return None
     print(f"[임베딩] 모델 로드: {EMBED_MODEL_NAME}")
     t0 = time.time()
     model = SentenceTransformer(EMBED_MODEL_NAME)
@@ -118,7 +130,17 @@ def load_embed_model() -> SentenceTransformer:
 # ── BM25 인덱스 ─────────────────────────────────────────
 
 def build_bm25(chunks: list[dict]) -> tuple[BM25Okapi, list[str]]:
-    """한국어 형태소 분석 기반 BM25 인덱스 구축"""
+    """한국어 형태소 분석 기반 BM25 인덱스 구축 (캐시 우선)"""
+    import pickle
+    cache_path = Path("data/processed/bm25_cache.pkl")
+    if cache_path.exists():
+        print(f"[BM25] 캐시 로드: {cache_path}")
+        t0 = time.time()
+        with open(cache_path, "rb") as f:
+            cached = pickle.load(f)
+        print(f"  완료: {round(time.time()-t0, 1)}s")
+        return cached["bm25"], cached["chunk_ids"]
+
     print(f"[BM25] 형태소 분석 중 ({len(chunks)}개)...")
     t0 = time.time()
     kiwi = _get_kiwi()
@@ -145,7 +167,7 @@ def search_qdrant(
     law_name: str = None,
 ) -> list[dict]:
     """Qdrant 벡터 검색. law_name 필터 지원 (ChromaDB에 없던 기능)."""
-    qdrant = QdrantClient(path=str(QDRANT_PATH))
+    qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
     query_filter = None
     if law_name:
@@ -186,6 +208,9 @@ def rrf(rankings: list[list[str]], k: int = 60) -> list[tuple[str, float]]:
 # ── Re-ranking ──────────────────────────────────────────
 
 def rerank(query: str, candidates: list[dict], top_k: int = TOP_K_FINAL) -> list[dict]:
+    if RERANKER_BACKEND == "remote":
+        return _rerank_remote(query, candidates, top_k)
+
     reranker = _get_bge_reranker()
     if reranker:
         pairs = [[query, c["text"]] for c in candidates]
@@ -196,6 +221,23 @@ def rerank(query: str, candidates: list[dict], top_k: int = TOP_K_FINAL) -> list
     # fallback: BGE Reranker 미사용 — reranker_score 없이 반환 (CRAG는 LLM 채점으로 fallback)
     print("  [WARN] BGE Reranker 미사용 — LLM 채점으로 전환됩니다 (레이턴시 증가)")
     return sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)[:top_k]
+
+
+def _rerank_remote(query: str, candidates: list[dict], top_k: int) -> list[dict]:
+    """macOS Reranker 서비스(host.lima.internal:11435)로 점수 요청."""
+    try:
+        resp = requests.post(
+            f"{RERANKER_HOST}/rerank",
+            json={"query": query, "documents": [c["text"] for c in candidates]},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        scores = resp.json()["scores"]
+        ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
+        return [{**c, "reranker_score": round(float(s), 4)} for s, c in ranked[:top_k]]
+    except Exception as e:
+        print(f"  [WARN] Remote reranker 실패: {e} — LLM 채점으로 전환")
+        return sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)[:top_k]
 
 
 # ── 하이브리드 검색 ──────────────────────────────────────
@@ -212,7 +254,10 @@ def hybrid_retrieve(
 ) -> list[dict]:
     """BM25 + Qdrant 벡터 검색 → RRF → BGE Reranker"""
     # 벡터 검색
-    q_vec = model.encode([query], normalize_embeddings=True).tolist()[0]
+    if model is None:
+        q_vec = embedding_backend.encode_query(query)
+    else:
+        q_vec = model.encode([query], normalize_embeddings=True).tolist()[0]
     vector_results = search_qdrant(q_vec, top_k=top_k_candidate, law_name=law_name)
     vector_ranking = [r["chunk_id"] for r in vector_results]
 

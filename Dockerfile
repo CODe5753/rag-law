@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements-docker.txt ./
-RUN pip install --no-cache-dir --no-deps -r requirements-docker.txt
+RUN pip install --no-cache-dir \
+    -r requirements-docker.txt
 
 
 # Stage 2: 런타임
@@ -24,8 +25,8 @@ COPY src/ ./src/
 
 # 데이터 (빌드 전 precompute.py + chunks.json + qdrant_data 준비 필요)
 COPY data/processed/chunks.json ./data/processed/chunks.json
+COPY data/processed/bm25_cache.pkl ./data/processed/bm25_cache.pkl
 COPY data/demo_cache/ ./data/demo_cache/
-COPY qdrant_data/ ./qdrant_data/
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
