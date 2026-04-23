@@ -209,16 +209,25 @@ def search_all_collections(query_vec: list[float], top_k: int = TOP_K_CANDIDATE)
             ).points
             for r in pts:
                 payload = r.payload or {}
+                src = payload.get("source", col_name)
+                # 출처별 표시 필드 정규화
+                if src == "prec":
+                    display_name = payload.get("법원명", "")
+                    display_article = payload.get("사건번호", "")
+                elif src == "expc":
+                    display_name = payload.get("안건명", "")
+                    display_article = payload.get("해석기관", "법제처")
+                else:
+                    display_name = payload.get("law_name", "")
+                    display_article = payload.get("article_num", "")
                 results.append({
                     "chunk_id": f"{col_name}:{r.id}",
                     "text": payload.get("text", ""),
-                    "source": payload.get("source", col_name),
+                    "source": src,
                     "collection": col_name,
                     "score": round(r.score, 4),
-                    "law_name": payload.get("law_name", ""),
-                    "사건번호": payload.get("사건번호", ""),
-                    "법원명": payload.get("법원명", ""),
-                    "section": payload.get("section", ""),
+                    "law_name": display_name,
+                    "article_num": display_article,
                 })
         except Exception as e:
             print(f"  [WARN] {col_name} 검색 실패: {e}")
