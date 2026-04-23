@@ -55,16 +55,16 @@ function getSampleUrl(qid) {
 // ── SSE 스트리밍 (자유 입력 폼 전용) ──────────────────────────
 
 const NODE_LABELS = {
-  retrieve: "법령 문서 검색 중 (Dense+BM25 하이브리드)",
-  grade_documents: "관련도 채점 중 (BGE-Reranker)",
+  retrieve: "법령·판례·해석례 검색 중",
+  grade_documents: "관련 자료 검증 중",
   generate: "AI 답변 생성 중",
-  fallback: "Fallback 응답 생성 중 (관련 조문 부족)",
+  fallback: "답변 생성 중 (관련 자료 부족)",
 };
 const NODE_DONE_LABELS = {
   retrieve: "검색 완료",
-  grade_documents: "채점 완료",
-  generate: "답변 생성 완료",
-  fallback: "Fallback 완료",
+  grade_documents: "검증 완료",
+  generate: "답변 완료",
+  fallback: "답변 완료",
 };
 
 let _streamTimer = null;

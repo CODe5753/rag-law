@@ -1,21 +1,25 @@
 """
-Phase 6: Qdrant 기반 RAG 파이프라인
+Phase 6: Qdrant 기반 RAG 파이프라인 (multi-collection)
 
-ChromaDB 대비 개선:
-  - payload 필터: law_name="개인정보보호법"처럼 특정 법령만 검색 가능
-  - 대용량 안정성: ChromaDB 필터링 hang(Issue #4089) 없음
-  - 검색 API: query_points() (qdrant-client 1.x, search() 제거됨)
-
-이 파일:
-  - Qdrant에서 벡터 검색
-  - BM25 하이브리드 + BGE Reranker v2-m3 (Phase 5 파이프라인 유지)
-  - 평가 실행 (--eval)
-  - 필터 데모 (--filter-demo)
+컬렉션:
+  - legal_statutes      → 법령 (158k+ points)
+  - legal_interpretation → 법령해석례 (86k+ points)
+  - case_law            → 판례 (44k+ points)
 """
 
 import json
 import os
 import time
+from pathlib import Path as _Path
+
+# .env 자동 로드 (QDRANT_HOST 등이 환경변수에 없을 때 대비)
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _env = _Path(__file__).parent.parent / ".env"
+    if _env.exists():
+        _load_dotenv(_env, override=False)
+except ImportError:
+    pass
 from pathlib import Path
 from collections import defaultdict
 
@@ -35,18 +39,24 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
-CHUNKS_PATH = Path("data/processed/chunks.json")
 EMBED_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
-COLLECTION_NAME = "law_chunks_v1"
 OUT_DIR = Path("data/processed")
 RERANKER_BACKEND = os.getenv("RERANKER_BACKEND", "local")  # "remote" | "local"
 RERANKER_HOST = os.getenv("RERANKER_HOST", "http://localhost:11435")
 
+BM25_CACHE_PATH = Path("data/processed/bm25_cache.pkl")
+
+COLLECTIONS = {
+    "legal_statutes": "법령",
+    "legal_interpretation": "법령해석례",
+    "case_law": "판례",
+}
+
 TOP_K_CANDIDATE = 20
 TOP_K_FINAL = 5
 
-SYSTEM_PROMPT = """당신은 한국 법령 전문가입니다. 아래 법령 조문을 참고하여 질문에 정확하게 답변하세요.
-법령에 없는 내용은 '관련 조문을 찾을 수 없습니다'라고 답하세요. 추측하지 마세요."""
+SYSTEM_PROMPT = """당신은 한국 법령 전문 AI입니다. 아래 법령 조문, 법령해석례, 판례를 참고하여 질문에 정확하게 답변하세요.
+제공된 자료에 없는 내용은 '관련 자료를 찾을 수 없습니다'라고 답하세요. 추측하지 마세요."""
 
 EVAL_QA = [
     {
@@ -109,12 +119,7 @@ def _get_bge_reranker():
     return _bge_reranker if _bge_reranker is not False else None
 
 
-# ── 데이터 로드 ─────────────────────────────────────────
-
-def load_chunks() -> list[dict]:
-    """BM25용 청크 로드 (Qdrant payload에도 text 있지만 BM25는 별도 인덱스 필요)"""
-    return json.loads(CHUNKS_PATH.read_text(encoding="utf-8"))
-
+# ── 임베딩 모델 ─────────────────────────────────────────
 
 def load_embed_model():
     if embedding_backend.is_ollama_backend():
@@ -127,72 +132,98 @@ def load_embed_model():
     return model
 
 
-# ── BM25 인덱스 ─────────────────────────────────────────
+# ── BM25 인덱스 (Qdrant 스크롤 기반) ───────────────────────
 
-def build_bm25(chunks: list[dict]) -> tuple[BM25Okapi, list[str]]:
-    """한국어 형태소 분석 기반 BM25 인덱스 구축 (캐시 우선)"""
+def build_bm25_from_qdrant() -> tuple[BM25Okapi, list[str]]:
+    """Qdrant 전체 스크롤로 BM25 인덱스 구축 (캐시 우선, version=2 확인)"""
     import pickle
-    cache_path = Path("data/processed/bm25_cache.pkl")
-    if cache_path.exists():
-        print(f"[BM25] 캐시 로드: {cache_path}")
-        t0 = time.time()
-        with open(cache_path, "rb") as f:
+    if BM25_CACHE_PATH.exists():
+        print(f"[BM25] 캐시 로드: {BM25_CACHE_PATH}")
+        with open(BM25_CACHE_PATH, "rb") as f:
             cached = pickle.load(f)
-        print(f"  완료: {round(time.time()-t0, 1)}s")
-        return cached["bm25"], cached["chunk_ids"]
+        if cached.get("version") == 2:
+            return cached["bm25"], cached["chunk_ids"]
+        print("  [BM25] 구버전 캐시 → 재빌드")
 
-    print(f"[BM25] 형태소 분석 중 ({len(chunks)}개)...")
-    t0 = time.time()
+    print("[BM25] Qdrant에서 텍스트 로드 중...")
+    qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, check_compatibility=False)
+    all_chunks = []  # list of (chunk_id, text)
+
+    for col_name in COLLECTIONS:
+        print(f"  {col_name} 스크롤 중...")
+        offset = None
+        while True:
+            result = qdrant.scroll(
+                collection_name=col_name,
+                limit=1000,
+                offset=offset,
+                with_payload=["text"],
+                with_vectors=False,
+            )
+            for pt in result[0]:
+                text = (pt.payload or {}).get("text", "")
+                if text:
+                    all_chunks.append((f"{col_name}:{pt.id}", text))
+            offset = result[1]
+            if offset is None:
+                break
+        print(f"    → {len(all_chunks)} 누적")
+
+    print(f"[BM25] 총 {len(all_chunks)}개 청크 형태소 분석 중...")
     kiwi = _get_kiwi()
-    chunk_ids = [c["chunk_id"] for c in chunks]
+    chunk_ids = [c[0] for c in all_chunks]
+    texts = [c[1] for c in all_chunks]
 
     if kiwi:
         tokenized = [
-            [t.form for t in kiwi.tokenize(c["text"]) if t.tag not in ("SF", "SP")]
-            for c in chunks
+            [t.form for t in kiwi.tokenize(text) if t.tag not in ("SF", "SP")]
+            for text in texts
         ]
     else:
-        tokenized = [c["text"].split() for c in chunks]
+        tokenized = [text.split() for text in texts]
 
     bm25 = BM25Okapi(tokenized)
-    print(f"  완료: {round(time.time()-t0, 1)}s")
+
+    BM25_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(BM25_CACHE_PATH, "wb") as f:
+        pickle.dump({"version": 2, "bm25": bm25, "chunk_ids": chunk_ids}, f)
+    print(f"[BM25] 캐시 저장: {BM25_CACHE_PATH}")
     return bm25, chunk_ids
 
 
-# ── Qdrant 검색 ─────────────────────────────────────────
+# ── 멀티 컬렉션 Qdrant 검색 ──────────────────────────────
 
-def search_qdrant(
-    query_vec: list[float],
-    top_k: int = TOP_K_CANDIDATE,
-    law_name: str = None,
-) -> list[dict]:
-    """Qdrant 벡터 검색. law_name 필터 지원 (ChromaDB에 없던 기능)."""
-    qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+def search_all_collections(query_vec: list[float], top_k: int = TOP_K_CANDIDATE) -> list[dict]:
+    """3개 컬렉션을 순차 검색하여 결과 병합."""
+    qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, check_compatibility=False)
+    per_col = max(top_k // len(COLLECTIONS), 5)
+    results = []
 
-    query_filter = None
-    if law_name:
-        query_filter = Filter(
-            must=[FieldCondition(key="law_name", match=MatchValue(value=law_name))]
-        )
+    for col_name in COLLECTIONS:
+        try:
+            pts = qdrant.query_points(
+                collection_name=col_name,
+                query=query_vec,
+                limit=per_col,
+                with_payload=True,
+            ).points
+            for r in pts:
+                payload = r.payload or {}
+                results.append({
+                    "chunk_id": f"{col_name}:{r.id}",
+                    "text": payload.get("text", ""),
+                    "source": payload.get("source", col_name),
+                    "collection": col_name,
+                    "score": round(r.score, 4),
+                    "law_name": payload.get("law_name", ""),
+                    "사건번호": payload.get("사건번호", ""),
+                    "법원명": payload.get("법원명", ""),
+                    "section": payload.get("section", ""),
+                })
+        except Exception as e:
+            print(f"  [WARN] {col_name} 검색 실패: {e}")
 
-    results = qdrant.query_points(
-        collection_name=COLLECTION_NAME,
-        query=query_vec,
-        limit=top_k,
-        query_filter=query_filter,
-        with_payload=True,
-    ).points
-
-    return [
-        {
-            "chunk_id": r.payload.get("chunk_id", str(r.id)),
-            "text": r.payload["text"],
-            "law_name": r.payload.get("law_name", ""),
-            "article_num": r.payload.get("article_num", ""),
-            "score": round(r.score, 4),
-        }
-        for r in results
-    ]
+    return results
 
 
 # ── RRF ────────────────────────────────────────────────
@@ -216,9 +247,7 @@ def rerank(query: str, candidates: list[dict], top_k: int = TOP_K_FINAL) -> list
         pairs = [[query, c["text"]] for c in candidates]
         scores = reranker.predict(pairs)
         ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-        # reranker_score를 doc에 포함 (CRAG grading에서 재활용)
         return [{**c, "reranker_score": round(float(s), 4)} for s, c in ranked[:top_k]]
-    # fallback: BGE Reranker 미사용 — reranker_score 없이 반환 (CRAG는 LLM 채점으로 fallback)
     print("  [WARN] BGE Reranker 미사용 — LLM 채점으로 전환됩니다 (레이턴시 증가)")
     return sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)[:top_k]
 
@@ -240,25 +269,39 @@ def _rerank_remote(query: str, candidates: list[dict], top_k: int) -> list[dict]
         return sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)[:top_k]
 
 
+# ── 컨텍스트 포맷 ────────────────────────────────────────
+
+def _format_chunk(r: dict) -> str:
+    src = r.get("source", "")
+    text = r["text"]
+    if src == "law":
+        label = f"[법령: {r.get('law_name', '')}]"
+    elif src == "expc":
+        label = "[법령해석례]"
+    elif src == "prec":
+        label = f"[판례: {r.get('사건번호', '')} {r.get('법원명', '')}]"
+    else:
+        label = f"[{src}]"
+    return f"{label}\n{text}"
+
+
 # ── 하이브리드 검색 ──────────────────────────────────────
 
 def hybrid_retrieve(
     query: str,
-    model: SentenceTransformer,
-    chunks: list[dict],
+    model,
     bm25: BM25Okapi,
     chunk_ids: list[str],
     top_k_candidate: int = TOP_K_CANDIDATE,
     top_k_final: int = TOP_K_FINAL,
-    law_name: str = None,
 ) -> list[dict]:
-    """BM25 + Qdrant 벡터 검색 → RRF → BGE Reranker"""
+    """BM25 + 멀티컬렉션 벡터 검색 → RRF → BGE Reranker"""
     # 벡터 검색
     if model is None:
         q_vec = embedding_backend.encode_query(query)
     else:
         q_vec = model.encode([query], normalize_embeddings=True).tolist()[0]
-    vector_results = search_qdrant(q_vec, top_k=top_k_candidate, law_name=law_name)
+    vector_results = search_all_collections(q_vec, top_k=top_k_candidate)
     vector_ranking = [r["chunk_id"] for r in vector_results]
 
     # BM25 검색
@@ -268,35 +311,29 @@ def hybrid_retrieve(
     else:
         tokens = query.split()
     bm25_scores = bm25.get_scores(tokens)
-    bm25_ranking = [chunk_ids[i] for i in sorted(range(len(bm25_scores)), key=lambda x: bm25_scores[x], reverse=True)[:top_k_candidate]]
+    bm25_ranking = [
+        chunk_ids[i]
+        for i in sorted(range(len(bm25_scores)), key=lambda x: bm25_scores[x], reverse=True)[:top_k_candidate]
+    ]
 
     # RRF 결합
     fused = rrf([vector_ranking, bm25_ranking])
     top_ids = {doc_id for doc_id, _ in fused[:top_k_candidate]}
 
-    # chunk_id → chunk 매핑 (Qdrant payload에서 가져온 결과 우선)
+    # chunk_id → chunk 매핑 (Qdrant 결과 우선; BM25 전용 결과는 스킵)
     id_to_chunk: dict[str, dict] = {r["chunk_id"]: r for r in vector_results}
-    # BM25 상위 중 Qdrant에 없는 것 보충
-    chunk_map = {c["chunk_id"]: c for c in chunks}
-    for cid in top_ids:
-        if cid not in id_to_chunk and cid in chunk_map:
-            id_to_chunk[cid] = chunk_map[cid]
-
     candidates = [id_to_chunk[cid] for cid in top_ids if cid in id_to_chunk]
 
-    # Re-ranking
     return rerank(query, candidates, top_k=top_k_final)
 
 
 # ── 답변 생성 ────────────────────────────────────────────
 
 def generate(question: str, retrieved: list[dict]) -> dict:
-    ctx = "\n\n".join(
-        f"[{r['law_name']} {r['article_num']}]\n{r['text']}" for r in retrieved
-    )
+    ctx = "\n\n".join(_format_chunk(r) for r in retrieved)
     prompt = f"""{SYSTEM_PROMPT}
 
-[참고 법령]
+[참고 자료]
 {ctx}
 
 [질문]
@@ -320,7 +357,6 @@ def generate(question: str, retrieved: list[dict]) -> dict:
 # ── 평가 ────────────────────────────────────────────────
 
 def run_evaluation():
-    import re
     import sys
     sys.path.insert(0, str(Path(__file__).parent))
     from evaluator import (
@@ -328,11 +364,9 @@ def run_evaluation():
         eval_context_recall, eval_context_precision,
     )
 
-    print("=== Phase 6: Qdrant RAG 평가 시작 ===\n")
+    print("=== Phase 6: Qdrant RAG 평가 시작 (multi-collection) ===\n")
     model = load_embed_model()
-    chunks = load_chunks()
-    bm25, chunk_ids = build_bm25(chunks)
-    # BGE reranker 미리 로드
+    bm25, chunk_ids = build_bm25_from_qdrant()
     _get_bge_reranker()
 
     all_scores = {"faithfulness": [], "answer_relevancy": [], "context_recall": [], "context_precision": []}
@@ -345,7 +379,7 @@ def run_evaluation():
         print(f"\n[{i+1}/{len(EVAL_QA)}] {q[:50]}...")
 
         t0 = time.time()
-        retrieved = hybrid_retrieve(q, model, chunks, bm25, chunk_ids)
+        retrieved = hybrid_retrieve(q, model, bm25, chunk_ids)
         gen = generate(q, retrieved)
         answer = gen["answer"]
         contexts = [r["text"] for r in retrieved]
@@ -370,7 +404,10 @@ def run_evaluation():
             "context_recall": recall,
             "context_precision": prec,
             "rag_latency_sec": rag_latency,
-            "top_sources": [f"{r['law_name']} {r['article_num']} ({r['score']})" for r in retrieved],
+            "top_sources": [
+                f"{r.get('source','')} {r.get('law_name','') or r.get('사건번호','')} ({r.get('score','-')})"
+                for r in retrieved
+            ],
         })
 
     elapsed = round(time.time() - t_total, 1)
@@ -378,8 +415,8 @@ def run_evaluation():
     def mean(lst): return round(sum(lst) / len(lst), 4) if lst else None
 
     final = {
-        "phase": "Phase6_Qdrant",
-        "mode": "HybridRerank_Qdrant",
+        "phase": "Phase6_Qdrant_MultiCol",
+        "mode": "HybridRerank_MultiCollection",
         "eval_time_sec": elapsed,
         "faithfulness": mean(all_scores["faithfulness"]),
         "answer_relevancy": mean(all_scores["answer_relevancy"]),
@@ -404,16 +441,17 @@ def run_evaluation():
 
 # ── 단일 쿼리 ────────────────────────────────────────────
 
-def run_query(question: str, law_name: str = None):
+def run_query(question: str):
     model = load_embed_model()
-    chunks = load_chunks()
-    bm25, chunk_ids = build_bm25(chunks)
+    bm25, chunk_ids = build_bm25_from_qdrant()
 
-    print(f"\n[검색] '{question}'" + (f" (필터: {law_name})" if law_name else ""))
-    retrieved = hybrid_retrieve(question, model, chunks, bm25, chunk_ids, law_name=law_name)
+    print(f"\n[검색] '{question}'")
+    retrieved = hybrid_retrieve(question, model, bm25, chunk_ids)
 
     for r in retrieved:
-        print(f"  [{r['law_name']} {r['article_num']}] score={r.get('score', '-')}")
+        src = r.get("source", "")
+        label = r.get("law_name") or r.get("사건번호") or r.get("section") or ""
+        print(f"  [{src}] {label} score={r.get('score', '-')}")
         print(f"    {r['text'][:100]}...")
 
     print("\n[답변 생성 중...]")
@@ -426,12 +464,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval", action="store_true", help="Phase 6 평가 실행")
     parser.add_argument("--query", help="단일 쿼리 실행")
-    parser.add_argument("--law", help="법령명 필터 (예: 개인정보보호법)")
     args = parser.parse_args()
 
     if args.eval:
         run_evaluation()
     elif args.query:
-        run_query(args.query, law_name=args.law)
+        run_query(args.query)
     else:
-        print("사용법: --eval | --query '질문' [--law '법령명']")
+        print("사용법: --eval | --query '질문'")

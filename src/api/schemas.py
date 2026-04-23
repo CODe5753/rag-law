@@ -7,6 +7,7 @@ class RetrievedDoc(BaseModel):
     law_name: str
     article_num: str
     text: str
+    source: Optional[str] = None   # "law" | "expc" | "prec"
     reranker_score: Optional[float] = None
     is_relevant: Optional[bool] = None   # CRAG grade 결과 (qdrant는 None)
 

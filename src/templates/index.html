@@ -3,90 +3,102 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>한국 법령 RAG 기술 데모</title>
+  <title>법령 AI — 법률 질문 답변</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script src="/static/app.js" defer></script>
   <style>
     #loading-indicator { display: none; }
     #loading-indicator.htmx-request { display: flex; }
-    .pipeline-node { @apply px-3 py-1.5 rounded text-sm font-medium border; }
-    .node-active   { @apply bg-blue-600 text-white border-blue-600; }
-    .node-inactive { @apply bg-gray-100 text-gray-400 border-gray-200; }
-    .node-fallback { @apply bg-orange-500 text-white border-orange-500; }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
 
   <!-- 법률 면책 고지 -->
-  <div class="bg-amber-50 border-b border-amber-200 px-6 py-2.5">
-    <div class="max-w-4xl mx-auto flex items-start gap-2 text-xs text-amber-800">
-      <span class="flex-shrink-0 font-semibold mt-0.5">⚠ 주의</span>
-      <span>
-        본 시스템은 연구·기술 시연용이며 <strong>법률 자문이 아닙니다</strong>.
-        AI 생성 답변에는 오류가 포함될 수 있으며, 실제 법률 판단은 변호사와 상담하세요.
-        인용된 조문은 반드시
-        <a href="https://www.law.go.kr" target="_blank" rel="noopener"
-           class="underline hover:text-amber-900">법제처 국가법령정보센터</a>에서 원문을 확인하세요.
-      </span>
+  <div class="bg-amber-50 border-b border-amber-200 px-4 py-2">
+    <div class="max-w-3xl mx-auto text-xs text-amber-800">
+      <strong>⚠ 주의</strong> — 본 서비스는 연구·시연용이며 <strong>법률 자문이 아닙니다</strong>.
+      실제 법률 판단은 변호사와 상담하고,
+      인용 조문은 <a href="https://www.law.go.kr" target="_blank" rel="noopener" class="underline">법제처</a>에서 원문을 확인하세요.
     </div>
   </div>
 
   <!-- Header -->
-  <header class="bg-white border-b border-gray-200 px-6 py-4">
-    <div class="max-w-4xl mx-auto">
-      <h1 class="text-xl font-bold text-gray-900">한국 법령 RAG</h1>
-      <p class="text-sm text-gray-500 mt-0.5">
-        CRAG · Hybrid Qdrant 두 파이프라인으로 법령 조문을 검색하고 AI가 답변을 생성하는 기술 데모
-      </p>
-      <div class="flex flex-wrap gap-2 mt-2">
-        <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{{ ollama_model }}</span>
-        <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">Mac Mini M2 16GB · Ollama 로컬 추론</span>
-        <span class="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">BGE-M3 · BGE-Reranker-v2-m3 · Kiwi BM25</span>
+  <header class="bg-white border-b border-gray-200 px-4 py-5">
+    <div class="max-w-3xl mx-auto">
+      <div class="flex items-baseline gap-3">
+        <h1 class="text-2xl font-bold text-gray-900">법령 AI</h1>
+        <span class="text-sm text-gray-400">법령·판례·법령해석례 검색 기반 법률 질문 답변</span>
+      </div>
+      <div class="mt-2 text-xs text-gray-400">
+        법령 158,000+ · 판례 44,000+ · 법령해석례 86,000+ 조각 검색 ·
+        <span class="text-gray-300">{{ ollama_model }} · Mac Mini M2 로컬 추론</span>
       </div>
     </div>
   </header>
 
-  <main class="max-w-4xl mx-auto px-6 py-6 space-y-6">
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-5">
 
-    <!-- Pipeline 선택 -->
-    <section class="bg-white rounded-lg border border-gray-200 p-5">
-      <h2 class="text-sm font-semibold text-gray-700 mb-3">파이프라인 선택</h2>
-      <div class="flex gap-6">
-        <label class="flex items-start gap-3 cursor-pointer group">
-          <input type="radio" name="pipeline" value="crag" checked
-                 class="mt-0.5 accent-blue-600" />
-          <div>
-            <div class="font-medium text-sm text-gray-900 group-hover:text-blue-600">
-              CRAG + LangGraph
+    <!-- 질문 입력 (최상단 배치) -->
+    <section class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+      <form id="query-form"
+            hx-post="/query"
+            hx-target="#result-area"
+            hx-swap="innerHTML"
+            hx-indicator="#loading-indicator"
+            hx-request='{"timeout": 120000}'
+            class="space-y-3">
+        <input type="hidden" name="pipeline" id="pipeline-hidden" value="qdrant" />
+        <div class="flex gap-2">
+          <input type="text"
+                 name="question"
+                 id="question-input"
+                 placeholder="법률 질문을 입력하세요. 예: 퇴직금을 못 받았을 때 어떻게 해야 하나요?"
+                 class="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2.5
+                        focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-300"
+                 required />
+          <button type="submit"
+                  class="px-5 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg
+                         hover:bg-blue-700 active:bg-blue-800 transition-colors whitespace-nowrap">
+            검색
+          </button>
+        </div>
+        <p class="text-xs text-gray-400">
+          로컬 AI 추론 특성상 <strong class="text-gray-500">15~30초</strong> 소요됩니다.
+        </p>
+      </form>
+
+      <!-- 고급 설정 (파이프라인 선택) -->
+      <details class="mt-3">
+        <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none">
+          고급 설정
+        </summary>
+        <div class="mt-2 flex gap-4 pl-1">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="pipeline" value="qdrant" checked
+                   class="accent-blue-600" />
+            <div>
+              <span class="text-xs font-medium text-gray-700">빠른 검색</span>
+              <span class="text-xs text-gray-400 ml-1">— 법령·판례·해석례 전체 하이브리드 검색 (기본)</span>
             </div>
-            <div class="text-xs text-gray-500 mt-0.5 space-y-0.5">
-              <div>Dense+BM25 하이브리드 검색 → BGE-Reranker 재순위</div>
-              <div>→ 관련도 채점(threshold 0.5) → 조건부 생성 / Fallback</div>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="pipeline" value="crag"
+                   class="accent-blue-600" />
+            <div>
+              <span class="text-xs font-medium text-gray-700">검증 검색</span>
+              <span class="text-xs text-gray-400 ml-1">— 관련도 검증 후 생성 (더 엄격한 필터링)</span>
             </div>
-          </div>
-        </label>
-        <label class="flex items-start gap-3 cursor-pointer group">
-          <input type="radio" name="pipeline" value="qdrant"
-                 class="mt-0.5 accent-blue-600" />
-          <div>
-            <div class="font-medium text-sm text-gray-900 group-hover:text-blue-600">
-              Hybrid Qdrant
-            </div>
-            <div class="text-xs text-gray-500 mt-0.5 space-y-0.5">
-              <div>Dense(BGE-M3) + Sparse(BM25) 하이브리드 검색</div>
-              <div>→ BGE-Reranker 재순위 → 바로 생성</div>
-            </div>
-          </div>
-        </label>
-      </div>
+          </label>
+        </div>
+      </details>
     </section>
 
-    <!-- 샘플 쿼리 -->
+    <!-- 예시 질문 -->
     {% if categories %}
-    <section class="bg-white rounded-lg border border-gray-200 p-5">
-      <h2 class="text-sm font-semibold text-gray-700 mb-1">샘플 질문</h2>
-      <p class="text-xs text-gray-400 mb-4">캐시된 결과 즉시 반환 — 파이프라인 동작을 바로 확인할 수 있습니다</p>
+    <section class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+      <h2 class="text-sm font-semibold text-gray-700 mb-1">이런 질문을 해보세요</h2>
+      <p class="text-xs text-gray-400 mb-4">예시를 클릭하면 바로 답변을 확인할 수 있습니다</p>
       <div class="space-y-4">
         {% for category in categories %}
         <div>
@@ -101,14 +113,14 @@
             <div class="flex items-center gap-1.5">
               <button
                 data-qid="{{ q.qid }}"
-                hx-get="/samples/{{ q.qid }}?pipeline=crag"
+                hx-get="/samples/{{ q.qid }}?pipeline=qdrant"
                 hx-target="#result-area"
                 hx-swap="innerHTML"
                 hx-indicator="#loading-indicator"
-                class="flex-1 text-xs px-3 py-1.5 rounded border border-gray-200 bg-gray-50
+                class="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-200 bg-gray-50
                        hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700
-                       transition-colors text-left text-gray-700 truncate">
-                {{ q.question[:60] }}{% if q.question|length > 60 %}…{% endif %}
+                       transition-colors text-left text-gray-700">
+                {{ q.question[:70] }}{% if q.question|length > 70 %}…{% endif %}
               </button>
               <button
                 data-compare-qid="{{ q.qid }}"
@@ -117,9 +129,10 @@
                 hx-swap="innerHTML"
                 hx-indicator="#loading-indicator"
                 title="CRAG vs Hybrid Qdrant 비교"
-                class="text-xs px-2 py-1.5 rounded border border-indigo-200 bg-indigo-50
-                       text-indigo-700 hover:bg-indigo-100 transition-colors whitespace-nowrap">
-                ⇄ 비교
+                class="text-xs px-2 py-2 rounded-lg border border-gray-200 bg-gray-50
+                       text-gray-500 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700
+                       transition-colors whitespace-nowrap">
+                비교
               </button>
             </div>
             {% endfor %}
@@ -128,44 +141,11 @@
         {% endfor %}
       </div>
     </section>
-    {% else %}
-    <div class="bg-yellow-50 border border-yellow-200 rounded p-4 text-sm text-yellow-800">
-      샘플 쿼리가 없습니다. <code>python src/api/precompute.py</code> 를 먼저 실행하세요.
-    </div>
     {% endif %}
-
-    <!-- 자유 입력 -->
-    <section class="bg-white rounded-lg border border-gray-200 p-5">
-      <h2 class="text-sm font-semibold text-gray-700 mb-3">직접 질문하기</h2>
-      <form id="query-form"
-            hx-post="/query"
-            hx-target="#result-area"
-            hx-swap="innerHTML"
-            hx-indicator="#loading-indicator"
-            hx-request='{"timeout": 120000}'
-            class="flex gap-2">
-        <input type="hidden" name="pipeline"
-               id="pipeline-hidden" value="crag" />
-        <input type="text"
-               name="question"
-               placeholder="예: 개인정보 수집 시 정보주체에게 알려야 할 사항은?"
-               class="flex-1 text-sm border border-gray-200 rounded px-3 py-2
-                      focus:outline-none focus:ring-2 focus:ring-blue-300"
-               required />
-        <button type="submit"
-                class="px-4 py-2 bg-blue-600 text-white text-sm rounded
-                       hover:bg-blue-700 transition-colors whitespace-nowrap">
-          질문하기
-        </button>
-      </form>
-      <p class="text-xs text-gray-400 mt-2">
-        로컬 추론 특성상 <strong>15~30초</strong> 소요됩니다. 첫 요청 시 최대 40초.
-      </p>
-    </section>
 
     <!-- 로딩 인디케이터 -->
     <div id="loading-indicator"
-         class="items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+         class="items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl p-4">
       <svg class="animate-spin h-5 w-5 text-blue-600 flex-shrink-0"
            fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10"
@@ -174,22 +154,22 @@
               d="M4 12a8 8 0 018-8v8H4z"/>
       </svg>
       <div class="text-sm text-blue-700">
-        <span id="loading-text">파이프라인 실행 중…</span>
-        <span class="ml-2"><span id="elapsed">0</span>초 경과</span>
+        <span id="loading-text">법령·판례 검색 중…</span>
+        <span class="ml-2 text-blue-500"><span id="elapsed">0</span>초 경과</span>
       </div>
     </div>
 
-    <!-- SSE 스트리밍 진행 UI (실시간 노드 진행 상태) -->
+    <!-- SSE 스트리밍 진행 UI -->
     <div id="stream-indicator"
-         class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4">
+         class="hidden bg-blue-50 border border-blue-200 rounded-xl p-4">
       <div class="text-sm text-blue-700 mb-2 flex items-center gap-2">
         <svg class="animate-spin h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
         </svg>
-        <span><span id="stream-label">파이프라인 실행 중</span> · <span id="stream-elapsed">0</span>초</span>
+        <span><span id="stream-label">법령·판례 검색 중</span> · <span id="stream-elapsed">0</span>초</span>
       </div>
-      <ol id="stream-steps" class="text-xs space-y-1"></ol>
+      <ol id="stream-steps" class="text-xs space-y-1 pl-6"></ol>
     </div>
 
     <!-- 결과 영역 -->
@@ -197,16 +177,15 @@
 
   </main>
 
-  <footer class="border-t border-gray-200 mt-12 py-6 px-6">
-    <div class="max-w-4xl mx-auto flex flex-wrap gap-4 text-xs text-gray-400">
+  <footer class="border-t border-gray-100 mt-12 py-5 px-4">
+    <div class="max-w-3xl mx-auto flex flex-wrap gap-4 text-xs text-gray-400">
       <a href="https://github.com/CODe5753/rag-law" target="_blank" rel="noopener"
          class="hover:text-gray-600">GitHub</a>
-      <span>Stack: exaone3.5:7.8b · BGE-M3 · BGE-Reranker-v2-m3 · Kiwi · Qdrant · LangGraph</span>
+      <span>{{ ollama_model }} · BGE-M3 · BGE-Reranker-v2-m3 · Kiwi BM25 · Qdrant · LangGraph</span>
     </div>
   </footer>
 
   <script>
-    // pipeline radio → hidden input 동기화
     document.querySelectorAll('input[name="pipeline"]').forEach(r => {
       r.addEventListener('change', () => {
         document.getElementById('pipeline-hidden').value = r.value;

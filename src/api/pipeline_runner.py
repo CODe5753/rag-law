@@ -80,19 +80,16 @@ def run_crag(question: str) -> QueryResponse:
 # ── Qdrant 실행 ──────────────────────────────────────────────
 
 def run_qdrant(question: str) -> QueryResponse:
-    from qdrant_rag import load_chunks, load_embed_model, build_bm25, hybrid_retrieve, generate
+    from qdrant_rag import load_embed_model, build_bm25_from_qdrant, hybrid_retrieve, generate
 
-    # 요청마다 로드 후 함수 종료 시 GC 해제 (pickle 0.0s, 메모리 반환)
-    chunks = load_chunks()
     model = load_embed_model()
-    bm25, chunk_ids = build_bm25(chunks)
+    bm25, chunk_ids = build_bm25_from_qdrant()
 
     t0 = time.time()
     try:
         docs = hybrid_retrieve(
             question,
             model,
-            chunks,
             bm25,
             chunk_ids,
         )
@@ -108,6 +105,7 @@ def run_qdrant(question: str) -> QueryResponse:
             law_name=d.get("law_name", ""),
             article_num=d.get("article_num", ""),
             text=d.get("text", ""),
+            source=d.get("source"),
             reranker_score=d.get("reranker_score"),
             is_relevant=True,   # qdrant는 grade 없음 — 검색된 모든 문서가 relevant
         )
