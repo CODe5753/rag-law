@@ -25,7 +25,6 @@ COPY src/ ./src/
 
 # 데이터 (빌드 전 precompute.py + chunks.json + qdrant_data 준비 필요)
 COPY data/processed/chunks.json ./data/processed/chunks.json
-COPY data/processed/bm25_cache.pkl ./data/processed/bm25_cache.pkl
 COPY data/demo_cache/ ./data/demo_cache/
 
 ENV PYTHONUNBUFFERED=1 \
