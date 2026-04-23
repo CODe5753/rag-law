@@ -9,6 +9,7 @@ Phase 6: Qdrant 기반 RAG 파이프라인 (multi-collection)
 
 import json
 import os
+import threading
 import time
 from pathlib import Path as _Path
 
@@ -45,6 +46,10 @@ RERANKER_BACKEND = os.getenv("RERANKER_BACKEND", "local")  # "remote" | "local"
 RERANKER_HOST = os.getenv("RERANKER_HOST", "http://localhost:11435")
 
 BM25_CACHE_PATH = Path("data/processed/bm25_cache.pkl")
+
+# 스레드 안전 BM25 싱글턴 — 동시 빌드 방지
+_bm25_lock = threading.Lock()
+_bm25_data: tuple | None = None  # (BM25Okapi, chunk_ids)
 
 COLLECTIONS = {
     "legal_statutes": "법령",
@@ -135,60 +140,78 @@ def load_embed_model():
 # ── BM25 인덱스 (Qdrant 스크롤 기반) ───────────────────────
 
 def build_bm25_from_qdrant() -> tuple[BM25Okapi, list[str]]:
-    """Qdrant 전체 스크롤로 BM25 인덱스 구축 (캐시 우선, version=2 확인)"""
+    """Qdrant 전체 스크롤로 BM25 인덱스 구축.
+
+    스레드 안전: _bm25_lock으로 동시 빌드 방지.
+    메모리 캐시(_bm25_data) 우선 → 디스크 캐시 → Qdrant 스크롤 순으로 시도.
+    """
     import pickle
-    if BM25_CACHE_PATH.exists():
-        print(f"[BM25] 캐시 로드: {BM25_CACHE_PATH}")
-        with open(BM25_CACHE_PATH, "rb") as f:
-            cached = pickle.load(f)
-        if cached.get("version") == 2:
-            return cached["bm25"], cached["chunk_ids"]
-        print("  [BM25] 구버전 캐시 → 재빌드")
+    global _bm25_data
 
-    print("[BM25] Qdrant에서 텍스트 로드 중...")
-    qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, check_compatibility=False)
-    all_chunks = []  # list of (chunk_id, text)
+    # 메모리 캐시 (파드 내 재호출 시 즉시 반환)
+    if _bm25_data is not None:
+        return _bm25_data
 
-    for col_name in COLLECTIONS:
-        print(f"  {col_name} 스크롤 중...")
-        offset = None
-        while True:
-            result = qdrant.scroll(
-                collection_name=col_name,
-                limit=1000,
-                offset=offset,
-                with_payload=["text"],
-                with_vectors=False,
-            )
-            for pt in result[0]:
-                text = (pt.payload or {}).get("text", "")
-                if text:
-                    all_chunks.append((f"{col_name}:{pt.id}", text))
-            offset = result[1]
-            if offset is None:
-                break
-        print(f"    → {len(all_chunks)} 누적")
+    with _bm25_lock:
+        # lock 획득 후 재확인 (대기 중 다른 스레드가 완료했을 수 있음)
+        if _bm25_data is not None:
+            return _bm25_data
 
-    print(f"[BM25] 총 {len(all_chunks)}개 청크 형태소 분석 중...")
-    kiwi = _get_kiwi()
-    chunk_ids = [c[0] for c in all_chunks]
-    texts = [c[1] for c in all_chunks]
+        if BM25_CACHE_PATH.exists():
+            print(f"[BM25] 캐시 로드: {BM25_CACHE_PATH}")
+            with open(BM25_CACHE_PATH, "rb") as f:
+                cached = pickle.load(f)
+            if cached.get("version") == 2:
+                _bm25_data = (cached["bm25"], cached["chunk_ids"])
+                return _bm25_data
+            print("  [BM25] 구버전 캐시 → 재빌드")
 
-    if kiwi:
-        tokenized = [
-            [t.form for t in kiwi.tokenize(text) if t.tag not in ("SF", "SP")]
-            for text in texts
-        ]
-    else:
-        tokenized = [text.split() for text in texts]
+        print("[BM25] Qdrant에서 텍스트 로드 중...")
+        qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, check_compatibility=False)
+        all_chunks = []
 
-    bm25 = BM25Okapi(tokenized)
+        for col_name in COLLECTIONS:
+            print(f"  {col_name} 스크롤 중...")
+            offset = None
+            while True:
+                result = qdrant.scroll(
+                    collection_name=col_name,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=["text"],
+                    with_vectors=False,
+                )
+                for pt in result[0]:
+                    text = (pt.payload or {}).get("text", "")
+                    if text:
+                        all_chunks.append((f"{col_name}:{pt.id}", text))
+                offset = result[1]
+                if offset is None:
+                    break
+            print(f"    → {len(all_chunks)} 누적")
 
-    BM25_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(BM25_CACHE_PATH, "wb") as f:
-        pickle.dump({"version": 2, "bm25": bm25, "chunk_ids": chunk_ids}, f)
-    print(f"[BM25] 캐시 저장: {BM25_CACHE_PATH}")
-    return bm25, chunk_ids
+        print(f"[BM25] 총 {len(all_chunks)}개 청크 형태소 분석 중...")
+        kiwi = _get_kiwi()
+        chunk_ids = [c[0] for c in all_chunks]
+        texts = [c[1] for c in all_chunks]
+
+        if kiwi:
+            tokenized = [
+                [t.form for t in kiwi.tokenize(text) if t.tag not in ("SF", "SP")]
+                for text in texts
+            ]
+        else:
+            tokenized = [text.split() for text in texts]
+
+        bm25 = BM25Okapi(tokenized)
+
+        BM25_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(BM25_CACHE_PATH, "wb") as f:
+            pickle.dump({"version": 2, "bm25": bm25, "chunk_ids": chunk_ids}, f)
+        print(f"[BM25] 캐시 저장: {BM25_CACHE_PATH}")
+
+        _bm25_data = (bm25, chunk_ids)
+        return _bm25_data
 
 
 # ── 멀티 컬렉션 Qdrant 검색 ──────────────────────────────
@@ -299,18 +322,27 @@ def _format_chunk(r: dict) -> str:
 def hybrid_retrieve(
     query: str,
     model,
-    bm25: BM25Okapi,
-    chunk_ids: list[str],
+    bm25: BM25Okapi | None,
+    chunk_ids: list[str] | None,
     top_k_candidate: int = TOP_K_CANDIDATE,
     top_k_final: int = TOP_K_FINAL,
 ) -> list[dict]:
-    """BM25 + 멀티컬렉션 벡터 검색 → RRF → BGE Reranker"""
+    """BM25 + 멀티컬렉션 벡터 검색 → RRF → BGE Reranker.
+
+    bm25=None이면 BM25 미준비 상태 — 벡터 전용으로 fallback.
+    """
     # 벡터 검색
     if model is None:
         q_vec = embedding_backend.encode_query(query)
     else:
         q_vec = model.encode([query], normalize_embeddings=True).tolist()[0]
     vector_results = search_all_collections(q_vec, top_k=top_k_candidate)
+
+    if bm25 is None or chunk_ids is None:
+        # BM25 빌드 중 — 벡터 전용
+        print("[hybrid_retrieve] BM25 미준비, 벡터 전용 검색")
+        return rerank(query, vector_results, top_k=top_k_final)
+
     vector_ranking = [r["chunk_id"] for r in vector_results]
 
     # BM25 검색

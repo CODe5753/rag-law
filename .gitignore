@@ -13,3 +13,4 @@ evaluation/results/
 .DS_Store
 *.egg-info/
 .omc/
+data/processed/bm25_cache.pkl
