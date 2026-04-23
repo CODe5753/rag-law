@@ -6,8 +6,12 @@ FastAPI 데모 앱 진입점.
   .venv/bin/uvicorn src.api.main:app --reload --port 8000
 """
 
+import logging
 import sys
+import threading
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # 프로젝트 루트에서 실행 가정 — src/ 를 경로에 추가
 _ROOT = Path(__file__).parent.parent.parent
@@ -24,10 +28,20 @@ from api import cache as cache_module
 from api.routes import router
 
 
+def _warm_bm25() -> None:
+    """BM25 인덱스를 백그라운드에서 미리 빌드 (파드 재시작 후 첫 요청 지연 방지)."""
+    try:
+        from qdrant_rag import build_bm25_from_qdrant
+        build_bm25_from_qdrant()
+        logger.info("[BM25] 프리워밍 완료")
+    except Exception as e:
+        logger.warning("[BM25] 프리워밍 실패: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 서버 기동 시 캐시 로드
     cache_module.load_cache()
+    threading.Thread(target=_warm_bm25, daemon=True, name="bm25-warmup").start()
     yield
 
 
