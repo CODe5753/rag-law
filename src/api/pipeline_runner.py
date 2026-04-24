@@ -185,7 +185,7 @@ def rewrite_query(question: str, history: list[dict]) -> str:
 # ── Intake 분류 ──────────────────────────────────────────────
 
 def intake_classify(question: str, history: list[dict]) -> dict:
-    """Ollama로 "정보 충분?" 판단. 충분하면 {"action":"search"}, 아니면 {"action":"ask","reply":"질문"}."""
+    """Gemini로 "정보 충분?" 판단. 충분하면 {"action":"search"}, 아니면 {"action":"ask","reply":"질문"}."""
     ai_turns = sum(1 for h in history if h["role"] == "assistant")
 
     # 2턴 이상 질문했으면 강제 검색
@@ -197,79 +197,43 @@ def intake_classify(question: str, history: list[dict]) -> dict:
         prefix = "사용자" if h["role"] == "user" else "AI"
         history_text += f"{prefix}: {h['content']}\n"
 
-    # 첫 메시지: 항상 1번 추가 질문 (SEARCH 금지)
-    first_message_instruction = ""
-    if ai_turns == 0:
-        first_message_instruction = """
-⚠ 이것은 첫 번째 메시지입니다. 반드시 추가 정보 수집 질문을 1개 해야 합니다.
-"SEARCH"를 출력하지 마세요. 무조건 질문으로 응답하세요.
-"""
+    prompt = f"""당신은 한국 법률 정보 AI 어시스턴트입니다. 사용자의 법률 상황을 파악합니다.
 
-    prompt = f"""당신은 한국 법률 정보 AI입니다. 사용자의 법률 상황을 파악하는 중입니다.
-{first_message_instruction}
 대화 내역:
-{history_text if history_text else "(첫 번째 메시지)"}
+{history_text if history_text else "(대화 시작)"}
 
 사용자: {question}
 
-판단: 법령·판례 검색에 필요한 핵심 정보가 충분한가?
+[판단 기준]
+아래 카테고리별 핵심 정보가 충분히 제공되었으면 "SEARCH"만 출력하세요.
+정보가 부족하면 가장 중요한 추가 질문 1개만 한국어로 출력하세요 (질문 형태, 짧게).
+사용자가 "모르겠다", "없다" 등으로 제공 불가를 표현하면 "SEARCH"를 출력하세요.
 
 카테고리별 필요 정보:
-- 노동(해고/임금): 고용 기간, 사업장 규모(5인 이상?), 해고/미지급 사유, 증거 여부
-- 가족/이혼: 법률혼/사실혼 구분, 자녀 유무, 재산 규모, 귀책사유
-- 폭행: 가해자와의 관계, 부상 정도, 증거(CCTV/목격자/진단서)
-- 부동산: 전세/월세 구분, 보증금, 계약 기간 및 위반 내용
-- 채권/사기: 금액, 증거(차용증/이체내역), 상대방 관계
+- 노동(해고/임금): 고용 기간, 사업장 규모(5인 이상?), 해고/미지급 사유
+- 가족/이혼: 법률혼/사실혼 구분, 자녀 유무, 귀책사유
+- 폭행: 가해자와의 관계, 부상 정도, 증거 여부
+- 부동산(임대차): 전세/월세 구분, 보증금 규모
+- 채권/사기: 금액, 증거(차용증/이체내역) 여부
+- 교통사고: 쌍방 과실 여부, 보험 처리 여부
 
-사용자가 정보를 모르거나 제공할 수 없다고 하면 "SEARCH"만 출력.
-충분한 정보가 있으면 "SEARCH"만 출력.
-정보가 부족하면 가장 중요한 추가 질문 1개만 한국어로 출력 (질문 형태, 짧게).
-
-출력:"""
+출력 (SEARCH 또는 질문 1개만):"""
 
     try:
-        import requests as _req
-        resp = _req.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=20,
-        )
-        result = resp.json().get("response", "").strip()
-        # 첫 메시지에서 SEARCH 응답이 와도 무시하고 강제 질문 생성
-        if ai_turns == 0 and result.upper().startswith("SEARCH"):
-            follow_up = _generate_follow_up(question)
-            return {"action": "ask", "reply": follow_up}
+        import google.generativeai as genai
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        if not api_key:
+            raise ValueError("no GEMINI_API_KEY")
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        resp = model.generate_content(prompt)
+        result = resp.text.strip()
         if result.upper().startswith("SEARCH"):
             return {"action": "search"}
         return {"action": "ask", "reply": result}
-    except Exception:
+    except Exception as e:
+        logger.warning("intake_classify Gemini failed, fallback to search: %s", e)
         return {"action": "search"}
-
-
-def _generate_follow_up(question: str) -> str:
-    """첫 메시지에서 SEARCH가 나왔을 때 강제로 추가 질문 생성."""
-    prompt = f"""다음 법률 상황에서 가장 중요한 추가 정보 1가지를 짧은 질문으로 물어보세요.
-
-상황: {question}
-
-카테고리별 핵심 질문:
-- 노동: 사업장 규모가 5인 이상인가요?
-- 부동산: 전세 계약인가요, 월세 계약인가요?
-- 가족/이혼: 법률혼(혼인신고)인가요, 사실혼인가요?
-- 폭행: 피해 정도(진단서 발급 여부)는 어떻게 되나요?
-- 채권: 차용증이나 이체 내역 등 증거가 있나요?
-
-질문만 출력 (한 문장, 짧게):"""
-    try:
-        import requests as _req
-        resp = _req.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=15,
-        )
-        return resp.json().get("response", "").strip() or "조금 더 자세한 상황을 알려주시겠어요?"
-    except Exception:
-        return "조금 더 자세한 상황을 알려주시겠어요?"
 
 
 # ── History 포함 Qdrant 실행 ─────────────────────────────────
