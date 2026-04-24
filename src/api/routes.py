@@ -258,20 +258,7 @@ async def chat_stream(request: Request, session_id: str, question: str, pipeline
                     reply = classify["reply"]
                     # AI 메시지 저장 (추가 질문)
                     await run_in_threadpool(session_store.add_message, session_id, "assistant", reply)
-                    # Intake 버블 HTML 생성
-                    import html as _html
-                    intake_html = f"""
-<div class="flex justify-end mb-3">
-  <div class="max-w-[80%] bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm">{_html.escape(q)}</div>
-</div>
-<div class="flex justify-start mb-4">
-  <div class="max-w-[85%] space-y-2">
-    <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
-      <div class="text-sm text-gray-800 leading-relaxed">{_html.escape(reply)}</div>
-    </div>
-  </div>
-</div>"""
-                    yield await sse_pack({"type": "done", "html": intake_html})
+                    yield await sse_pack({"type": "ask", "reply": reply})
                     return
 
                 # 4. Search: RAG 실행
@@ -295,12 +282,22 @@ async def chat_stream(request: Request, session_id: str, question: str, pipeline
                     docs_for_store,
                 )
 
-                # 6. 채팅 버블 HTML 생성
-                html = templates.TemplateResponse(
-                    request, "partials/chat_bubble.html",
-                    {"result": result, "user_question": q}
-                ).body.decode()
-                yield await sse_pack({"type": "done", "html": html})
+                # 6. 결과 전송
+                docs_data = [
+                    {
+                        "law_name": d.law_name,
+                        "article_num": d.article_num,
+                        "source": d.source,
+                        "reranker_score": d.reranker_score,
+                    }
+                    for d in (result.retrieved_docs or [])[:5]
+                ]
+                yield await sse_pack({
+                    "type": "done",
+                    "answer": result.answer,
+                    "docs": docs_data,
+                    "latency": result.latency_sec,
+                })
 
             except Exception as e:
                 logger.exception("chat stream pipeline failed: %s", e)

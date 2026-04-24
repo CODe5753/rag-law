@@ -186,6 +186,11 @@ def rewrite_query(question: str, history: list[dict]) -> str:
 
 def intake_classify(question: str, history: list[dict]) -> dict:
     """Ollama로 "정보 충분?" 판단. 충분하면 {"action":"search"}, 아니면 {"action":"ask","reply":"질문"}."""
+    # Force search after 2 follow-up questions
+    ai_turns = sum(1 for h in history if h["role"] == "assistant")
+    if ai_turns >= 2:
+        return {"action": "search"}
+
     history_text = ""
     for h in history:
         prefix = "사용자" if h["role"] == "user" else "AI"
@@ -208,6 +213,7 @@ def intake_classify(question: str, history: list[dict]) -> dict:
 - 채권/사기: 금액, 증거(차용증/이체내역), 상대방 관계
 
 충분한 정보가 있으면 "SEARCH"만 출력.
+사용자가 정보를 모르거나 제공할 수 없다고 하면 "SEARCH"만 출력.
 정보가 부족하면 가장 중요한 추가 질문 1개만 한국어로 출력 (질문 형태, 짧게).
 
 출력:"""

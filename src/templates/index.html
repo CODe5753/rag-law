@@ -6,9 +6,25 @@
   <title>법령 AI — 법률 정보 검색</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <script>
     window.__INITIAL_SESSION_ID__ = "{{ initial_session_id | default('') }}";
   </script>
+  <style>
+    .prose-chat h1, .prose-chat h2, .prose-chat h3 { font-weight: 600; margin-bottom: 0.25rem; }
+    .prose-chat p { margin-bottom: 0.5rem; }
+    .prose-chat ul, .prose-chat ol { padding-left: 1.25rem; margin-bottom: 0.5rem; }
+    .prose-chat li { margin-bottom: 0.15rem; }
+    .prose-chat strong { font-weight: 600; }
+    .prose-chat p:last-child { margin-bottom: 0; }
+    @keyframes bounce-dot {
+      0%, 80%, 100% { transform: translateY(0); }
+      40% { transform: translateY(-6px); }
+    }
+    .dot-bounce { animation: bounce-dot 1.2s infinite; }
+    .dot-bounce:nth-child(2) { animation-delay: 0.2s; }
+    .dot-bounce:nth-child(3) { animation-delay: 0.4s; }
+  </style>
 </head>
 <body class="bg-gray-50 min-h-screen flex flex-col">
 
@@ -94,20 +110,6 @@
     </div>
   </main>
 
-  <!-- Progress indicator (shown during streaming) -->
-  <div id="stream-indicator" class="hidden px-4 py-2 flex-shrink-0">
-    <div class="max-w-3xl mx-auto">
-      <div class="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
-        <svg class="animate-spin h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-        </svg>
-        <span id="stream-label">법령·판례 검색 중</span>
-        <span class="text-blue-400">· <span id="stream-elapsed">0</span>초</span>
-      </div>
-    </div>
-  </div>
-
   <!-- Input bar (sticky bottom) -->
   <div class="bg-white border-t border-gray-200 px-4 py-3 flex-shrink-0">
     <div class="max-w-3xl mx-auto">
@@ -137,12 +139,66 @@
     const SESSION_KEY = 'rag_law_session_id';
     let sessionId = localStorage.getItem(SESSION_KEY);
     let streaming = false;
-    let elapsedTimer = null;
-    let elapsedSec = 0;
 
-    // ── HTML 이스케이프 ──────────────────────────────────────
+    marked.setOptions({ breaks: true });
+
     function escapeHtml(str) {
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function userBubbleHtml(text) {
+      return `<div class="flex justify-end mb-3">
+        <div class="max-w-[80%] bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm">${escapeHtml(text)}</div>
+      </div>`;
+    }
+
+    function typingBubbleHtml(id) {
+      return `<div id="${id}" class="flex justify-start mb-4">
+        <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+          <div class="flex gap-1.5 items-center h-5">
+            <div class="w-2 h-2 bg-gray-400 rounded-full dot-bounce"></div>
+            <div class="w-2 h-2 bg-gray-400 rounded-full dot-bounce"></div>
+            <div class="w-2 h-2 bg-gray-400 rounded-full dot-bounce"></div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    function aiBubbleHtml(text, docs, latency) {
+      const mdHtml = marked.parse(text);
+      let chips = '';
+      if (docs && docs.length) {
+        chips = '<div class="flex flex-wrap gap-1 mt-2">';
+        docs.slice(0, 5).forEach(d => {
+          if (d.source === 'law')
+            chips += `<span class="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full">⚖ ${escapeHtml((d.law_name||'').slice(0,20))}</span>`;
+          else if (d.source === 'prec')
+            chips += `<span class="text-xs px-2 py-0.5 bg-orange-50 text-orange-700 border border-orange-200 rounded-full">⚖ ${escapeHtml((d.article_num||'').slice(0,20))}</span>`;
+          else if (d.source === 'expc')
+            chips += `<span class="text-xs px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full">📋 ${escapeHtml((d.law_name||'').slice(0,20))}</span>`;
+        });
+        chips += '</div>';
+      }
+      const latencyHtml = latency != null ? `<div class="text-xs text-gray-400 mt-1">${latency}초 소요</div>` : '';
+      return `<div class="flex justify-start mb-4">
+        <div class="max-w-[85%] space-y-1">
+          <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+            <div class="prose-chat text-sm text-gray-800 leading-relaxed">${mdHtml}</div>
+            ${chips}
+          </div>
+          ${latencyHtml}
+        </div>
+      </div>`;
+    }
+
+    function intakeBubbleHtml(text) {
+      return `<div class="flex justify-start mb-4">
+        <div class="max-w-[85%]">
+          <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+            <div class="text-sm text-gray-800 leading-relaxed">${escapeHtml(text)}</div>
+          </div>
+        </div>
+      </div>`;
     }
 
     // ── 세션 복원 ────────────────────────────────────────────
@@ -151,21 +207,17 @@
         const res = await fetch(`/api/chat/${sid}/messages`);
         const messages = await res.json();
         if (!messages.length) return;
-        // 온보딩 숨기기
         const ob = document.getElementById('onboarding');
         if (ob) ob.style.display = 'none';
-        // 버블 렌더링
         const container = document.getElementById('chat-messages');
-        for (let i = 0; i < messages.length; i += 2) {
-          const userMsg = messages[i];
-          const aiMsg = messages[i + 1];
-          if (!userMsg) break;
-          let html = `<div class="flex justify-end mb-3"><div class="max-w-[80%] bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm">${escapeHtml(userMsg.content)}</div></div>`;
-          if (aiMsg) {
-            html += `<div class="flex justify-start mb-4"><div class="max-w-[85%]"><div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-sm text-gray-800 leading-relaxed whitespace-pre-line">${escapeHtml(aiMsg.content)}</div></div></div>`;
-          }
+        for (let i = 0; i < messages.length; i++) {
+          const m = messages[i];
           const div = document.createElement('div');
-          div.innerHTML = html;
+          if (m.role === 'user') {
+            div.innerHTML = userBubbleHtml(m.content);
+          } else {
+            div.innerHTML = aiBubbleHtml(m.content, null, null);
+          }
           container.appendChild(div);
         }
         scrollToBottom();
@@ -176,7 +228,6 @@
 
     // ── 세션 초기화 ──────────────────────────────────────────
     async function ensureSession() {
-      // URL에 주입된 세션 ID 우선
       const urlSessionId = window.__INITIAL_SESSION_ID__;
       if (urlSessionId) {
         sessionId = urlSessionId;
@@ -184,24 +235,28 @@
         await restoreSession(sessionId);
         return;
       }
-      if (sessionId) return;
-      // 새 세션 생성
+      if (sessionId) {
+        // Update URL if needed
+        if (!location.pathname.includes(sessionId)) {
+          history.replaceState({}, '', '/chat/' + sessionId);
+        }
+        return;
+      }
       try {
         const res = await fetch('/chat/new', { method: 'POST' });
         const data = await res.json();
         sessionId = data.session_id;
         localStorage.setItem(SESSION_KEY, sessionId);
-        history.pushState({}, '', '/chat/' + sessionId);
+        history.replaceState({}, '', '/chat/' + sessionId);
       } catch (e) {
         console.error('session create failed', e);
       }
     }
 
-    // ── 새 상담 ───────────────────────────────────────────────
+    // ── 새 상담 ──────────────────────────────────────────────
     document.getElementById('new-chat-btn').addEventListener('click', async () => {
       sessionId = null;
       localStorage.removeItem(SESSION_KEY);
-      // 채팅 영역 초기화 (온보딩 복원)
       const msgs = document.getElementById('chat-messages');
       msgs.innerHTML = `
         <div id="onboarding" class="space-y-4">
@@ -231,23 +286,19 @@
           </div>
         </div>`;
       bindCategoryCards();
-      // 새 세션 생성 및 URL 업데이트
       await ensureSession();
     });
 
-    // ── 카테고리 카드 클릭 ────────────────────────────────────
     function bindCategoryCards() {
       document.querySelectorAll('.category-card').forEach(btn => {
         btn.addEventListener('click', () => {
-          const q = btn.dataset.question;
-          document.getElementById('question-input').value = q;
+          document.getElementById('question-input').value = btn.dataset.question;
           document.getElementById('question-input').focus();
         });
       });
     }
     bindCategoryCards();
 
-    // ── textarea 자동 높이 조절 ──────────────────────────────
     const textarea = document.getElementById('question-input');
     textarea.addEventListener('input', () => {
       textarea.style.height = 'auto';
@@ -260,28 +311,11 @@
       }
     });
 
-    // ── 진행 타이머 ───────────────────────────────────────────
-    function startTimer() {
-      elapsedSec = 0;
-      document.getElementById('stream-elapsed').textContent = '0';
-      document.getElementById('stream-indicator').classList.remove('hidden');
-      elapsedTimer = setInterval(() => {
-        elapsedSec++;
-        document.getElementById('stream-elapsed').textContent = elapsedSec;
-      }, 1000);
-    }
-
-    function stopTimer() {
-      clearInterval(elapsedTimer);
-      document.getElementById('stream-indicator').classList.add('hidden');
-    }
-
-    // ── 메시지 전송 ───────────────────────────────────────────
+    // ── 메시지 전송 ──────────────────────────────────────────
     async function sendQuestion(question) {
       if (streaming || !question.trim()) return;
       await ensureSession();
 
-      // 온보딩 숨기기
       const onboarding = document.getElementById('onboarding');
       if (onboarding) onboarding.remove();
 
@@ -290,10 +324,30 @@
       document.getElementById('question-input').value = '';
       textarea.style.height = 'auto';
 
+      const msgs = document.getElementById('chat-messages');
+
+      // Immediately show user bubble
+      msgs.insertAdjacentHTML('beforeend', userBubbleHtml(question));
+      scrollToBottom();
+
+      // Show typing indicator bubble
+      const typingId = 'typing-' + Date.now();
+      msgs.insertAdjacentHTML('beforeend', typingBubbleHtml(typingId));
+      scrollToBottom();
+
       const url = `/chat/stream?session_id=${encodeURIComponent(sessionId)}&question=${encodeURIComponent(question)}&pipeline=qdrant`;
 
-      startTimer();
-      document.getElementById('stream-label').textContent = '법령·판례 검색 중';
+      function replaceTyping(html) {
+        const tb = document.getElementById(typingId);
+        if (tb) {
+          const div = document.createElement('div');
+          div.innerHTML = html;
+          tb.replaceWith(div);
+        } else {
+          msgs.insertAdjacentHTML('beforeend', html);
+        }
+        scrollToBottom();
+      }
 
       try {
         const resp = await fetch(url);
@@ -312,37 +366,24 @@
             let evt;
             try { evt = JSON.parse(line.slice(6)); } catch { continue; }
 
-            if (evt.type === 'node') {
-              const labels = {
-                retrieve: '법령·판례 검색 중',
-                grade_documents: '관련도 검증 중',
-                generate: '답변 생성 중',
-                fallback: '폴백 답변 생성 중',
-              };
-              document.getElementById('stream-label').textContent =
-                labels[evt.node] || evt.node;
+            if (evt.type === 'ask') {
+              replaceTyping(intakeBubbleHtml(evt.reply));
 
             } else if (evt.type === 'done') {
-              stopTimer();
-              const msgs = document.getElementById('chat-messages');
-              msgs.insertAdjacentHTML('beforeend', evt.html);
-              scrollToBottom();
+              replaceTyping(aiBubbleHtml(evt.answer, evt.docs, evt.latency));
 
             } else if (evt.type === 'error') {
-              stopTimer();
-              const msgs = document.getElementById('chat-messages');
-              msgs.insertAdjacentHTML('beforeend',
-                `<div class="flex justify-start mb-4">
-                   <div class="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 text-sm text-red-700 max-w-[85%]">
-                     오류: ${evt.message}
-                   </div>
-                 </div>`);
-              scrollToBottom();
+              replaceTyping(`<div class="flex justify-start mb-4">
+                <div class="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 text-sm text-red-700 max-w-[85%]">
+                  오류: ${escapeHtml(evt.message)}
+                </div>
+              </div>`);
             }
           }
         }
       } catch (e) {
-        stopTimer();
+        const tb = document.getElementById(typingId);
+        if (tb) tb.remove();
         console.error('SSE error', e);
       } finally {
         streaming = false;
@@ -355,14 +396,12 @@
       scroll.scrollTop = scroll.scrollHeight;
     }
 
-    // ── 폼 제출 ──────────────────────────────────────────────
     document.getElementById('chat-form').addEventListener('submit', (e) => {
       e.preventDefault();
       const q = document.getElementById('question-input').value.trim();
       if (q) sendQuestion(q);
     });
 
-    // ── 초기 세션 준비 ────────────────────────────────────────
     ensureSession();
   })();
   </script>
