@@ -227,7 +227,7 @@ def intake_classify(question: str, history: list[dict]) -> dict:
             raise ValueError("no GEMINI_API_KEY")
         client = genai.Client(
             api_key=api_key,
-            http_options=gtypes.HttpOptions(timeout=20),
+            http_options=gtypes.HttpOptions(timeout=20000),
         )
         resp = client.models.generate_content(
             model="gemini-3-flash-preview",

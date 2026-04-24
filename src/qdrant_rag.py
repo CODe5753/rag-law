@@ -417,7 +417,7 @@ def generate_with_gemini(question: str, retrieved: list[dict], history: list[dic
 
     client = genai.Client(
         api_key=api_key,
-        http_options=gtypes.HttpOptions(timeout=30),
+        http_options=gtypes.HttpOptions(timeout=30000),
     )
 
     ctx = "\n\n".join(_format_chunk(r) for r in retrieved)
