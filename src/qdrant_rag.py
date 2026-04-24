@@ -8,10 +8,13 @@ Phase 6: Qdrant 기반 RAG 파이프라인 (multi-collection)
 """
 
 import json
+import logging
 import os
 import threading
 import time
 from pathlib import Path as _Path
+
+logger = logging.getLogger(__name__)
 
 # .env 자동 로드 (QDRANT_HOST 등이 환경변수에 없을 때 대비)
 try:
