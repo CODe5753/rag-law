@@ -15,7 +15,8 @@ from fastapi.templating import Jinja2Templates
 
 from api.schemas import QueryRequest, QueryResponse, RetrievedDoc, PipelineTrace, GradingSummary
 from api import cache as cache_module
-from api.pipeline_runner import run_pipeline
+from api.pipeline_runner import run_pipeline, rewrite_query
+from api import session_store
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
@@ -208,6 +209,127 @@ async def query_stream(request: Request, question: str, pipeline: str = "crag"):
 
             except Exception as e:
                 logger.exception("stream pipeline failed: %s", e)
+                yield await sse_pack({"type": "error", "message": str(e)})
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── 채팅 엔드포인트 ───────────────────────────────────────────
+
+@router.post("/chat/new")
+async def chat_new():
+    sid = await run_in_threadpool(session_store.create_session)
+    return {"session_id": sid}
+
+
+@router.get("/chat/stream")
+async def chat_stream(request: Request, session_id: str, question: str, pipeline: str = "qdrant"):
+    q = question.strip()
+    if not q:
+        return HTMLResponse("<p class='text-red-500'>질문을 입력해주세요.</p>", status_code=400)
+
+    async def sse_pack(obj: dict) -> str:
+        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+    async def event_gen():
+        async with _query_semaphore:
+            try:
+                # 1. 세션 히스토리 로드
+                history = await run_in_threadpool(session_store.get_history, session_id, 3)
+
+                # 2. 쿼리 재작성
+                rewritten = await run_in_threadpool(rewrite_query, q, history)
+
+                if pipeline == "crag":
+                    loop = asyncio.get_event_loop()
+                    queue: asyncio.Queue = asyncio.Queue()
+                    final_state_holder = {"state": None}
+
+                    def run_in_thread():
+                        try:
+                            from crag_rag import build_crag_graph
+                            app = build_crag_graph()
+                            initial_state = {
+                                "question": rewritten,
+                                "documents": [],
+                                "relevant_docs": [],
+                                "generation": "",
+                                "fallback_used": False,
+                                "grading_log": [],
+                            }
+                            merged: dict = dict(initial_state)
+                            for event in app.stream(initial_state):
+                                for node_name, partial in event.items():
+                                    if isinstance(partial, dict):
+                                        merged.update(partial)
+                                    asyncio.run_coroutine_threadsafe(
+                                        queue.put({"type": "node", "node": node_name}), loop
+                                    ).result()
+                            final_state_holder["state"] = merged
+                        except Exception as e:
+                            asyncio.run_coroutine_threadsafe(
+                                queue.put({"type": "error", "message": str(e)}), loop
+                            ).result()
+                        finally:
+                            asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
+
+                    t0 = time.time()
+                    loop.run_in_executor(None, run_in_thread)
+
+                    while True:
+                        item = await queue.get()
+                        if item is None:
+                            break
+                        yield await sse_pack(item)
+                        if item.get("type") == "error":
+                            return
+
+                    latency = round(time.time() - t0, 1)
+                    final_state = final_state_holder["state"]
+                    if final_state is None:
+                        yield await sse_pack({"type": "error", "message": "스트리밍 결과 없음"})
+                        return
+
+                    result = _build_crag_response(rewritten, final_state, latency)
+
+                else:
+                    yield await sse_pack({"type": "node", "node": "retrieve"})
+                    result = await run_in_threadpool(run_pipeline, rewritten, pipeline)
+
+                # 3. 세션에 저장
+                docs_for_store = [
+                    {
+                        "law_name": d.law_name,
+                        "article_num": d.article_num,
+                        "source": d.source,
+                    }
+                    for d in (result.retrieved_docs or [])
+                ]
+                await run_in_threadpool(session_store.add_message, session_id, "user", q)
+                await run_in_threadpool(
+                    session_store.add_message,
+                    session_id,
+                    "assistant",
+                    result.answer,
+                    docs_for_store,
+                )
+
+                # 4. 채팅 버블 HTML 생성
+                html = templates.TemplateResponse(
+                    request, "partials/chat_bubble.html",
+                    {"result": result, "user_question": q}
+                ).body.decode()
+                yield await sse_pack({"type": "done", "html": html})
+
+            except Exception as e:
+                logger.exception("chat stream pipeline failed: %s", e)
                 yield await sse_pack({"type": "error", "message": str(e)})
 
     return StreamingResponse(

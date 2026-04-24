@@ -6,16 +6,11 @@
   <title>법령 AI — 법률 정보 검색</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <script src="/static/app.js" defer></script>
-  <style>
-    #loading-indicator { display: none; }
-    #loading-indicator.htmx-request { display: flex; }
-  </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-gray-50 min-h-screen flex flex-col">
 
   <!-- 법률 면책 고지 -->
-  <div class="bg-amber-50 border-b border-amber-200 px-4 py-2">
+  <div class="bg-amber-50 border-b border-amber-200 px-4 py-2 flex-shrink-0">
     <div class="max-w-3xl mx-auto text-xs text-amber-800">
       <strong>⚠ 법률 정보 제공 서비스</strong> — 법령·판례 기반 <strong>정보 검색</strong>이며 법률 자문·상담이 아닙니다.
       구체적인 법적 판단·권리 행사는 반드시 변호사와 상담하세요.
@@ -24,173 +19,304 @@
   </div>
 
   <!-- Header -->
-  <header class="bg-white border-b border-gray-200 px-4 py-5">
-    <div class="max-w-3xl mx-auto">
-      <div class="flex items-baseline gap-3">
-        <h1 class="text-2xl font-bold text-gray-900">법령 AI</h1>
-        <span class="text-sm text-gray-400">법령·판례·법령해석례 기반 법률 정보 제공</span>
+  <header class="bg-white border-b border-gray-200 px-4 py-4 flex-shrink-0">
+    <div class="max-w-3xl mx-auto flex items-center justify-between">
+      <div>
+        <div class="flex items-baseline gap-3">
+          <h1 class="text-xl font-bold text-gray-900">법령 AI</h1>
+          <span class="text-xs text-gray-400 hidden sm:inline">법령·판례·법령해석례 기반 법률 정보</span>
+        </div>
+        <div class="text-xs text-gray-400 mt-0.5">
+          {{ ollama_model }} · Mac Mini M2 로컬 추론
+        </div>
       </div>
-      <div class="mt-2 text-xs text-gray-400">
-        법령 158,000+ · 판례 44,000+ · 법령해석례 86,000+ 조각 검색 ·
-        <span class="text-gray-300">{{ ollama_model }} · Mac Mini M2 로컬 추론</span>
-      </div>
+      <button id="new-chat-btn"
+              class="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600
+                     hover:bg-gray-50 hover:border-gray-300 transition-colors">
+        새 상담
+      </button>
     </div>
   </header>
 
-  <main class="max-w-3xl mx-auto px-4 py-6 space-y-5">
+  <!-- Chat messages area -->
+  <main class="flex-1 overflow-y-auto px-4 py-6" id="chat-scroll">
+    <div class="max-w-3xl mx-auto space-y-2" id="chat-messages">
 
-    <!-- 질문 입력 (최상단 배치) -->
-    <section class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-      <form id="query-form"
-            hx-post="/query"
-            hx-target="#result-area"
-            hx-swap="innerHTML"
-            hx-indicator="#loading-indicator"
-            hx-request='{"timeout": 120000}'
-            class="space-y-3">
-        <input type="hidden" name="pipeline" id="pipeline-hidden" value="qdrant" />
-        <div class="flex gap-2">
-          <input type="text"
-                 name="question"
-                 id="question-input"
-                 placeholder="법률 질문을 입력하세요. 예: 퇴직금을 못 받았을 때 어떻게 해야 하나요?"
-                 class="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2.5
-                        focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-300"
-                 required />
-          <button type="submit"
-                  class="px-5 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg
-                         hover:bg-blue-700 active:bg-blue-800 transition-colors whitespace-nowrap">
-            검색
+      <!-- Onboarding cards (hidden once first message sent) -->
+      <div id="onboarding" class="space-y-4">
+        <div class="text-center py-6">
+          <div class="text-2xl font-bold text-gray-800 mb-1">무엇이 궁금하신가요?</div>
+          <div class="text-sm text-gray-500">법령·판례 기반으로 법률 정보를 알려드립니다</div>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all"
+                  data-question="부당해고를 당했을 때 어떻게 해야 하나요?">
+            <div class="text-lg mb-1">🏭</div>
+            <div class="font-semibold text-sm text-gray-800">노동법</div>
+            <div class="text-xs text-gray-500 mt-0.5">부당해고·임금체불·퇴직금</div>
+          </button>
+          <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all"
+                  data-question="이혼 절차와 재산분할은 어떻게 되나요?">
+            <div class="text-lg mb-1">👨‍👩‍👧</div>
+            <div class="font-semibold text-sm text-gray-800">가족/연인</div>
+            <div class="text-xs text-gray-500 mt-0.5">이혼·양육권·재산분할</div>
+          </button>
+          <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all"
+                  data-question="폭행 피해를 입었을 때 고소 방법과 절차는?">
+            <div class="text-lg mb-1">👊</div>
+            <div class="font-semibold text-sm text-gray-800">폭행</div>
+            <div class="text-xs text-gray-500 mt-0.5">고소·정당방위·합의</div>
+          </button>
+          <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all"
+                  data-question="전세 보증금을 돌려받지 못할 때 법적 조치는?">
+            <div class="text-lg mb-1">🏠</div>
+            <div class="font-semibold text-sm text-gray-800">부동산</div>
+            <div class="text-xs text-gray-500 mt-0.5">임대차·보증금·계약분쟁</div>
+          </button>
+          <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all"
+                  data-question="빌려준 돈을 돌려받기 위한 법적 방법은?">
+            <div class="text-lg mb-1">💰</div>
+            <div class="font-semibold text-sm text-gray-800">채권/사기</div>
+            <div class="text-xs text-gray-500 mt-0.5">빌려준 돈·계약위반·사기</div>
+          </button>
+          <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all"
+                  data-question="교통사고 과실비율은 어떻게 결정되나요?">
+            <div class="text-lg mb-1">🚗</div>
+            <div class="font-semibold text-sm text-gray-800">교통사고</div>
+            <div class="text-xs text-gray-500 mt-0.5">과실비율·합의·보험</div>
           </button>
         </div>
-        <p class="text-xs text-gray-400">
-          로컬 AI 추론 특성상 <strong class="text-gray-500">15~30초</strong> 소요됩니다.
-        </p>
-      </form>
-
-      <!-- 고급 설정 (파이프라인 선택) -->
-      <details class="mt-3">
-        <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none">
-          고급 설정
-        </summary>
-        <div class="mt-2 flex gap-4 pl-1">
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name="pipeline" value="qdrant" checked
-                   class="accent-blue-600" />
-            <div>
-              <span class="text-xs font-medium text-gray-700">빠른 검색</span>
-              <span class="text-xs text-gray-400 ml-1">— 법령·판례·해석례 전체 하이브리드 검색 (기본)</span>
-            </div>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name="pipeline" value="crag"
-                   class="accent-blue-600" />
-            <div>
-              <span class="text-xs font-medium text-gray-700">검증 검색</span>
-              <span class="text-xs text-gray-400 ml-1">— 관련도 검증 후 생성 (더 엄격한 필터링)</span>
-            </div>
-          </label>
-        </div>
-      </details>
-    </section>
-
-    <!-- 예시 질문 -->
-    {% if categories %}
-    <section class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-      <h2 class="text-sm font-semibold text-gray-700 mb-1">이런 질문을 해보세요</h2>
-      <p class="text-xs text-gray-400 mb-4">예시를 클릭하면 바로 답변을 확인할 수 있습니다</p>
-      <div class="space-y-4">
-        {% for category in categories %}
-        <div>
-          <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            {{ category.name }}
-            {% if category.description %}
-            <span class="font-normal normal-case tracking-normal text-gray-400 ml-1">{{ category.description }}</span>
-            {% endif %}
-          </div>
-          <div class="flex flex-col gap-1.5">
-            {% for q in category.queries %}
-            <div class="flex items-center gap-1.5">
-              <button
-                data-qid="{{ q.qid }}"
-                hx-get="/samples/{{ q.qid }}?pipeline=qdrant"
-                hx-target="#result-area"
-                hx-swap="innerHTML"
-                hx-indicator="#loading-indicator"
-                class="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-200 bg-gray-50
-                       hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700
-                       transition-colors text-left text-gray-700">
-                {{ q.question[:70] }}{% if q.question|length > 70 %}…{% endif %}
-              </button>
-              <button
-                data-compare-qid="{{ q.qid }}"
-                hx-get="/compare/{{ q.qid }}"
-                hx-target="#result-area"
-                hx-swap="innerHTML"
-                hx-indicator="#loading-indicator"
-                title="CRAG vs Hybrid Qdrant 비교"
-                class="text-xs px-2 py-2 rounded-lg border border-gray-200 bg-gray-50
-                       text-gray-500 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700
-                       transition-colors whitespace-nowrap">
-                비교
-              </button>
-            </div>
-            {% endfor %}
-          </div>
-        </div>
-        {% endfor %}
       </div>
-    </section>
-    {% endif %}
 
-    <!-- 로딩 인디케이터 -->
-    <div id="loading-indicator"
-         class="items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl p-4">
-      <svg class="animate-spin h-5 w-5 text-blue-600 flex-shrink-0"
-           fill="none" viewBox="0 0 24 24">
-        <circle class="opacity-25" cx="12" cy="12" r="10"
-                stroke="currentColor" stroke-width="4"/>
-        <path class="opacity-75" fill="currentColor"
-              d="M4 12a8 8 0 018-8v8H4z"/>
-      </svg>
-      <div class="text-sm text-blue-700">
-        <span id="loading-text">법령·판례 검색 중…</span>
-        <span class="ml-2 text-blue-500"><span id="elapsed">0</span>초 경과</span>
-      </div>
     </div>
+  </main>
 
-    <!-- SSE 스트리밍 진행 UI -->
-    <div id="stream-indicator"
-         class="hidden bg-blue-50 border border-blue-200 rounded-xl p-4">
-      <div class="text-sm text-blue-700 mb-2 flex items-center gap-2">
-        <svg class="animate-spin h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24">
+  <!-- Progress indicator (shown during streaming) -->
+  <div id="stream-indicator" class="hidden px-4 py-2 flex-shrink-0">
+    <div class="max-w-3xl mx-auto">
+      <div class="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+        <svg class="animate-spin h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
         </svg>
-        <span><span id="stream-label">법령·판례 검색 중</span> · <span id="stream-elapsed">0</span>초</span>
+        <span id="stream-label">법령·판례 검색 중</span>
+        <span class="text-blue-400">· <span id="stream-elapsed">0</span>초</span>
       </div>
-      <ol id="stream-steps" class="text-xs space-y-1 pl-6"></ol>
     </div>
+  </div>
 
-    <!-- 결과 영역 -->
-    <div id="result-area"></div>
-
-  </main>
-
-  <footer class="border-t border-gray-100 mt-12 py-5 px-4">
-    <div class="max-w-3xl mx-auto flex flex-wrap gap-4 text-xs text-gray-400">
-      <a href="https://github.com/CODe5753/rag-law" target="_blank" rel="noopener"
-         class="hover:text-gray-600">GitHub</a>
-      <span>{{ ollama_model }} · BGE-M3 · BGE-Reranker-v2-m3 · Kiwi BM25 · Qdrant · LangGraph</span>
+  <!-- Input bar (sticky bottom) -->
+  <div class="bg-white border-t border-gray-200 px-4 py-3 flex-shrink-0">
+    <div class="max-w-3xl mx-auto">
+      <form id="chat-form" class="flex gap-2 items-end">
+        <textarea id="question-input"
+                  name="question"
+                  rows="1"
+                  placeholder="법률 질문을 입력하세요…"
+                  class="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2.5
+                         focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-300
+                         resize-none overflow-hidden leading-relaxed"
+                  style="min-height: 42px; max-height: 140px;"></textarea>
+        <button type="submit" id="send-btn"
+                class="px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl
+                       hover:bg-blue-700 active:bg-blue-800 transition-colors flex-shrink-0 self-end">
+          전송
+        </button>
+      </form>
+      <div class="text-xs text-gray-400 mt-1.5 text-center">
+        로컬 AI 추론 특성상 <strong class="text-gray-500">15~30초</strong> 소요됩니다
+      </div>
     </div>
-  </footer>
+  </div>
 
   <script>
-    document.querySelectorAll('input[name="pipeline"]').forEach(r => {
-      r.addEventListener('change', () => {
-        document.getElementById('pipeline-hidden').value = r.value;
-      });
+  (function () {
+    const SESSION_KEY = 'rag_law_session_id';
+    let sessionId = localStorage.getItem(SESSION_KEY);
+    let streaming = false;
+    let elapsedTimer = null;
+    let elapsedSec = 0;
+
+    // ── 세션 초기화 ──────────────────────────────────────────
+    async function ensureSession() {
+      if (sessionId) return;
+      try {
+        const res = await fetch('/chat/new', { method: 'POST' });
+        const data = await res.json();
+        sessionId = data.session_id;
+        localStorage.setItem(SESSION_KEY, sessionId);
+      } catch (e) {
+        console.error('session create failed', e);
+      }
+    }
+
+    // ── 새 상담 ───────────────────────────────────────────────
+    document.getElementById('new-chat-btn').addEventListener('click', async () => {
+      sessionId = null;
+      localStorage.removeItem(SESSION_KEY);
+      await ensureSession();
+      // 채팅 영역 초기화 (온보딩 복원)
+      const msgs = document.getElementById('chat-messages');
+      msgs.innerHTML = `
+        <div id="onboarding" class="space-y-4">
+          <div class="text-center py-6">
+            <div class="text-2xl font-bold text-gray-800 mb-1">무엇이 궁금하신가요?</div>
+            <div class="text-sm text-gray-500">법령·판례 기반으로 법률 정보를 알려드립니다</div>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all" data-question="부당해고를 당했을 때 어떻게 해야 하나요?">
+              <div class="text-lg mb-1">🏭</div><div class="font-semibold text-sm text-gray-800">노동법</div><div class="text-xs text-gray-500 mt-0.5">부당해고·임금체불·퇴직금</div>
+            </button>
+            <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all" data-question="이혼 절차와 재산분할은 어떻게 되나요?">
+              <div class="text-lg mb-1">👨‍👩‍👧</div><div class="font-semibold text-sm text-gray-800">가족/연인</div><div class="text-xs text-gray-500 mt-0.5">이혼·양육권·재산분할</div>
+            </button>
+            <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all" data-question="폭행 피해를 입었을 때 고소 방법과 절차는?">
+              <div class="text-lg mb-1">👊</div><div class="font-semibold text-sm text-gray-800">폭행</div><div class="text-xs text-gray-500 mt-0.5">고소·정당방위·합의</div>
+            </button>
+            <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all" data-question="전세 보증금을 돌려받지 못할 때 법적 조치는?">
+              <div class="text-lg mb-1">🏠</div><div class="font-semibold text-sm text-gray-800">부동산</div><div class="text-xs text-gray-500 mt-0.5">임대차·보증금·계약분쟁</div>
+            </button>
+            <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all" data-question="빌려준 돈을 돌려받기 위한 법적 방법은?">
+              <div class="text-lg mb-1">💰</div><div class="font-semibold text-sm text-gray-800">채권/사기</div><div class="text-xs text-gray-500 mt-0.5">빌려준 돈·계약위반·사기</div>
+            </button>
+            <button class="category-card text-left p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow transition-all" data-question="교통사고 과실비율은 어떻게 결정되나요?">
+              <div class="text-lg mb-1">🚗</div><div class="font-semibold text-sm text-gray-800">교통사고</div><div class="text-xs text-gray-500 mt-0.5">과실비율·합의·보험</div>
+            </button>
+          </div>
+        </div>`;
+      bindCategoryCards();
     });
+
+    // ── 카테고리 카드 클릭 ────────────────────────────────────
+    function bindCategoryCards() {
+      document.querySelectorAll('.category-card').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const q = btn.dataset.question;
+          document.getElementById('question-input').value = q;
+          document.getElementById('question-input').focus();
+        });
+      });
+    }
+    bindCategoryCards();
+
+    // ── textarea 자동 높이 조절 ──────────────────────────────
+    const textarea = document.getElementById('question-input');
+    textarea.addEventListener('input', () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 140) + 'px';
+    });
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        document.getElementById('chat-form').requestSubmit();
+      }
+    });
+
+    // ── 진행 타이머 ───────────────────────────────────────────
+    function startTimer() {
+      elapsedSec = 0;
+      document.getElementById('stream-elapsed').textContent = '0';
+      document.getElementById('stream-indicator').classList.remove('hidden');
+      elapsedTimer = setInterval(() => {
+        elapsedSec++;
+        document.getElementById('stream-elapsed').textContent = elapsedSec;
+      }, 1000);
+    }
+
+    function stopTimer() {
+      clearInterval(elapsedTimer);
+      document.getElementById('stream-indicator').classList.add('hidden');
+    }
+
+    // ── 메시지 전송 ───────────────────────────────────────────
+    async function sendQuestion(question) {
+      if (streaming || !question.trim()) return;
+      await ensureSession();
+
+      // 온보딩 숨기기
+      const onboarding = document.getElementById('onboarding');
+      if (onboarding) onboarding.remove();
+
+      streaming = true;
+      document.getElementById('send-btn').disabled = true;
+      document.getElementById('question-input').value = '';
+      textarea.style.height = 'auto';
+
+      const url = `/chat/stream?session_id=${encodeURIComponent(sessionId)}&question=${encodeURIComponent(question)}&pipeline=qdrant`;
+
+      startTimer();
+      document.getElementById('stream-label').textContent = '법령·판례 검색 중';
+
+      try {
+        const resp = await fetch(url);
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            let evt;
+            try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+            if (evt.type === 'node') {
+              const labels = {
+                retrieve: '법령·판례 검색 중',
+                grade_documents: '관련도 검증 중',
+                generate: '답변 생성 중',
+                fallback: '폴백 답변 생성 중',
+              };
+              document.getElementById('stream-label').textContent =
+                labels[evt.node] || evt.node;
+
+            } else if (evt.type === 'done') {
+              stopTimer();
+              const msgs = document.getElementById('chat-messages');
+              msgs.insertAdjacentHTML('beforeend', evt.html);
+              scrollToBottom();
+
+            } else if (evt.type === 'error') {
+              stopTimer();
+              const msgs = document.getElementById('chat-messages');
+              msgs.insertAdjacentHTML('beforeend',
+                `<div class="flex justify-start mb-4">
+                   <div class="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 text-sm text-red-700 max-w-[85%]">
+                     오류: ${evt.message}
+                   </div>
+                 </div>`);
+              scrollToBottom();
+            }
+          }
+        }
+      } catch (e) {
+        stopTimer();
+        console.error('SSE error', e);
+      } finally {
+        streaming = false;
+        document.getElementById('send-btn').disabled = false;
+      }
+    }
+
+    function scrollToBottom() {
+      const scroll = document.getElementById('chat-scroll');
+      scroll.scrollTop = scroll.scrollHeight;
+    }
+
+    // ── 폼 제출 ──────────────────────────────────────────────
+    document.getElementById('chat-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const q = document.getElementById('question-input').value.trim();
+      if (q) sendQuestion(q);
+    });
+
+    // ── 초기 세션 준비 ────────────────────────────────────────
+    ensureSession();
+  })();
   </script>
 
 </body>

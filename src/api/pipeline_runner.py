@@ -4,9 +4,16 @@ crag_rag, qdrant_rag 원본 코드는 수정하지 않음.
 """
 
 from __future__ import annotations
+import logging
+import os
 import sys
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 
 # src/ 디렉토리를 경로에 추가 (crag_rag, qdrant_rag import용)
 _SRC = Path(__file__).parent.parent
@@ -137,6 +144,40 @@ def run_qdrant(question: str) -> QueryResponse:
             grading_summary=None,
         ),
     )
+
+
+# ── 쿼리 재작성 ──────────────────────────────────────────────
+
+def rewrite_query(question: str, history: list[dict]) -> str:
+    """history가 없으면 question 그대로 반환. 있으면 Ollama로 독립 쿼리 생성."""
+    if not history:
+        return question
+
+    turns = "\n".join(
+        f"{'사용자' if h['role'] == 'user' else 'AI'}: {h['content']}"
+        for h in history[-6:]  # last 3 turns = up to 6 messages
+    )
+    prompt = (
+        "다음은 법률 정보 서비스의 대화 내역입니다.\n"
+        f"{turns}\n\n"
+        f"새 질문: {question}\n\n"
+        "위 대화 맥락을 반영해 새 질문을 독립적으로 검색 가능한 한국어 문장으로 재작성하세요. "
+        "재작성된 질문만 출력하세요."
+    )
+
+    try:
+        import requests as _req
+        resp = _req.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        rewritten = resp.json().get("response", "").strip()
+        return rewritten if rewritten else question
+    except Exception as e:
+        logger.warning("rewrite_query failed, using original: %s", e)
+        return question
 
 
 # ── 디스패처 ─────────────────────────────────────────────────

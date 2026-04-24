@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 
 from api import cache as cache_module
 from api.routes import router
+from api import session_store
 
 
 def _warm_bm25() -> None:
@@ -40,6 +41,7 @@ def _warm_bm25() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    session_store.init_db()
     cache_module.load_cache()
     threading.Thread(target=_warm_bm25, daemon=True, name="bm25-warmup").start()
     yield

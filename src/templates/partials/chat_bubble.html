@@ -1,0 +1,31 @@
+{# Jinja2 — called with result, user_question #}
+<!-- User bubble -->
+<div class="flex justify-end mb-3">
+  <div class="max-w-[80%] bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm">
+    {{ user_question }}
+  </div>
+</div>
+
+<!-- Assistant bubble -->
+<div class="flex justify-start mb-4">
+  <div class="max-w-[85%] space-y-2">
+    <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+      <div class="text-sm text-gray-800 leading-relaxed whitespace-pre-line">{{ result.answer }}</div>
+    </div>
+    <!-- Source chips below bubble -->
+    {% if result.retrieved_docs %}
+    <div class="flex flex-wrap gap-1 pl-1">
+      {% for doc in result.retrieved_docs[:5] %}
+        {% if doc.source == 'law' %}
+          <span class="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full">⚖ {{ doc.law_name[:20] }}</span>
+        {% elif doc.source == 'prec' %}
+          <span class="text-xs px-2 py-0.5 bg-orange-50 text-orange-700 border border-orange-200 rounded-full">⚖ {{ doc.article_num[:20] }}</span>
+        {% elif doc.source == 'expc' %}
+          <span class="text-xs px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full">📋 {{ doc.law_name[:20] }}</span>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+    <div class="text-xs text-gray-400 pl-1">{{ result.latency_sec }}초 소요</div>
+  </div>
+</div>
