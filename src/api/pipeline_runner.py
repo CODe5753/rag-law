@@ -87,12 +87,14 @@ def run_crag(question: str) -> QueryResponse:
 # ── Qdrant 실행 ──────────────────────────────────────────────
 
 def run_qdrant(question: str) -> QueryResponse:
-    from qdrant_rag import load_embed_model, build_bm25_from_qdrant, hybrid_retrieve, generate, _bm25_lock, _bm25_data
+    from qdrant_rag import load_embed_model, build_bm25_from_qdrant, hybrid_retrieve, generate, _bm25_lock, _bm25_data, _BM25_DISABLED
 
     model = load_embed_model()
 
-    # BM25 lock 비획득 시(빌드 중) → None 전달 → 벡터 전용 fallback
-    if _bm25_data is not None:
+    # BM25_DISABLED=true 이면 벡터 전용 모드
+    if _BM25_DISABLED:
+        bm25, chunk_ids = None, None
+    elif _bm25_data is not None:
         bm25, chunk_ids = _bm25_data
     elif _bm25_lock.acquire(blocking=False):
         _bm25_lock.release()

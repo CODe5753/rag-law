@@ -50,6 +50,7 @@ BM25_CACHE_PATH = Path("data/processed/bm25_cache.pkl")
 # 스레드 안전 BM25 싱글턴 — 동시 빌드 방지
 _bm25_lock = threading.Lock()
 _bm25_data: tuple | None = None  # (BM25Okapi, chunk_ids)
+_BM25_DISABLED = os.getenv("BM25_DISABLED", "false").lower() == "true"
 
 COLLECTIONS = {
     "legal_statutes": "법령",

@@ -7,6 +7,7 @@ FastAPI 데모 앱 진입점.
 """
 
 import logging
+import os
 import sys
 import threading
 from pathlib import Path
@@ -29,8 +30,14 @@ from api.routes import router
 from api import session_store
 
 
+_BM25_DISABLED = os.getenv("BM25_DISABLED", "false").lower() == "true"
+
+
 def _warm_bm25() -> None:
     """BM25 인덱스를 백그라운드에서 미리 빌드 (파드 재시작 후 첫 요청 지연 방지)."""
+    if _BM25_DISABLED:
+        logger.info("[BM25] BM25_DISABLED=true — 벡터 전용 모드로 실행")
+        return
     try:
         from qdrant_rag import build_bm25_from_qdrant
         build_bm25_from_qdrant()
