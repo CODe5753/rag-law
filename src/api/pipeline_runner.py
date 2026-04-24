@@ -186,8 +186,9 @@ def rewrite_query(question: str, history: list[dict]) -> str:
 
 def intake_classify(question: str, history: list[dict]) -> dict:
     """Ollama로 "정보 충분?" 판단. 충분하면 {"action":"search"}, 아니면 {"action":"ask","reply":"질문"}."""
-    # Force search after 2 follow-up questions
     ai_turns = sum(1 for h in history if h["role"] == "assistant")
+
+    # 2턴 이상 질문했으면 강제 검색
     if ai_turns >= 2:
         return {"action": "search"}
 
@@ -196,8 +197,16 @@ def intake_classify(question: str, history: list[dict]) -> dict:
         prefix = "사용자" if h["role"] == "user" else "AI"
         history_text += f"{prefix}: {h['content']}\n"
 
-    prompt = f"""당신은 한국 법률 정보 AI입니다. 사용자의 법률 상황을 파악하는 중입니다.
+    # 첫 메시지: 항상 1번 추가 질문 (SEARCH 금지)
+    first_message_instruction = ""
+    if ai_turns == 0:
+        first_message_instruction = """
+⚠ 이것은 첫 번째 메시지입니다. 반드시 추가 정보 수집 질문을 1개 해야 합니다.
+"SEARCH"를 출력하지 마세요. 무조건 질문으로 응답하세요.
+"""
 
+    prompt = f"""당신은 한국 법률 정보 AI입니다. 사용자의 법률 상황을 파악하는 중입니다.
+{first_message_instruction}
 대화 내역:
 {history_text if history_text else "(첫 번째 메시지)"}
 
@@ -209,11 +218,11 @@ def intake_classify(question: str, history: list[dict]) -> dict:
 - 노동(해고/임금): 고용 기간, 사업장 규모(5인 이상?), 해고/미지급 사유, 증거 여부
 - 가족/이혼: 법률혼/사실혼 구분, 자녀 유무, 재산 규모, 귀책사유
 - 폭행: 가해자와의 관계, 부상 정도, 증거(CCTV/목격자/진단서)
-- 부동산: 전세/월세 구분, 보증금, 계약 위반 내용
+- 부동산: 전세/월세 구분, 보증금, 계약 기간 및 위반 내용
 - 채권/사기: 금액, 증거(차용증/이체내역), 상대방 관계
 
-충분한 정보가 있으면 "SEARCH"만 출력.
 사용자가 정보를 모르거나 제공할 수 없다고 하면 "SEARCH"만 출력.
+충분한 정보가 있으면 "SEARCH"만 출력.
 정보가 부족하면 가장 중요한 추가 질문 1개만 한국어로 출력 (질문 형태, 짧게).
 
 출력:"""
@@ -226,11 +235,41 @@ def intake_classify(question: str, history: list[dict]) -> dict:
             timeout=20,
         )
         result = resp.json().get("response", "").strip()
+        # 첫 메시지에서 SEARCH 응답이 와도 무시하고 강제 질문 생성
+        if ai_turns == 0 and result.upper().startswith("SEARCH"):
+            follow_up = _generate_follow_up(question)
+            return {"action": "ask", "reply": follow_up}
         if result.upper().startswith("SEARCH"):
             return {"action": "search"}
         return {"action": "ask", "reply": result}
     except Exception:
-        return {"action": "search"}  # 실패 시 항상 검색
+        return {"action": "search"}
+
+
+def _generate_follow_up(question: str) -> str:
+    """첫 메시지에서 SEARCH가 나왔을 때 강제로 추가 질문 생성."""
+    prompt = f"""다음 법률 상황에서 가장 중요한 추가 정보 1가지를 짧은 질문으로 물어보세요.
+
+상황: {question}
+
+카테고리별 핵심 질문:
+- 노동: 사업장 규모가 5인 이상인가요?
+- 부동산: 전세 계약인가요, 월세 계약인가요?
+- 가족/이혼: 법률혼(혼인신고)인가요, 사실혼인가요?
+- 폭행: 피해 정도(진단서 발급 여부)는 어떻게 되나요?
+- 채권: 차용증이나 이체 내역 등 증거가 있나요?
+
+질문만 출력 (한 문장, 짧게):"""
+    try:
+        import requests as _req
+        resp = _req.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+            timeout=15,
+        )
+        return resp.json().get("response", "").strip() or "조금 더 자세한 상황을 알려주시겠어요?"
+    except Exception:
+        return "조금 더 자세한 상황을 알려주시겠어요?"
 
 
 # ── History 포함 Qdrant 실행 ─────────────────────────────────
