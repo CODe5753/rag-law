@@ -6,6 +6,9 @@
   <title>법령 AI — 법률 정보 검색</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script>
+    window.__INITIAL_SESSION_ID__ = "{{ initial_session_id | default('') }}";
+  </script>
 </head>
 <body class="bg-gray-50 min-h-screen flex flex-col">
 
@@ -137,14 +140,58 @@
     let elapsedTimer = null;
     let elapsedSec = 0;
 
+    // ── HTML 이스케이프 ──────────────────────────────────────
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ── 세션 복원 ────────────────────────────────────────────
+    async function restoreSession(sid) {
+      try {
+        const res = await fetch(`/api/chat/${sid}/messages`);
+        const messages = await res.json();
+        if (!messages.length) return;
+        // 온보딩 숨기기
+        const ob = document.getElementById('onboarding');
+        if (ob) ob.style.display = 'none';
+        // 버블 렌더링
+        const container = document.getElementById('chat-messages');
+        for (let i = 0; i < messages.length; i += 2) {
+          const userMsg = messages[i];
+          const aiMsg = messages[i + 1];
+          if (!userMsg) break;
+          let html = `<div class="flex justify-end mb-3"><div class="max-w-[80%] bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm">${escapeHtml(userMsg.content)}</div></div>`;
+          if (aiMsg) {
+            html += `<div class="flex justify-start mb-4"><div class="max-w-[85%]"><div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-sm text-gray-800 leading-relaxed whitespace-pre-line">${escapeHtml(aiMsg.content)}</div></div></div>`;
+          }
+          const div = document.createElement('div');
+          div.innerHTML = html;
+          container.appendChild(div);
+        }
+        scrollToBottom();
+      } catch (e) {
+        console.error('session restore failed', e);
+      }
+    }
+
     // ── 세션 초기화 ──────────────────────────────────────────
     async function ensureSession() {
+      // URL에 주입된 세션 ID 우선
+      const urlSessionId = window.__INITIAL_SESSION_ID__;
+      if (urlSessionId) {
+        sessionId = urlSessionId;
+        localStorage.setItem(SESSION_KEY, sessionId);
+        await restoreSession(sessionId);
+        return;
+      }
       if (sessionId) return;
+      // 새 세션 생성
       try {
         const res = await fetch('/chat/new', { method: 'POST' });
         const data = await res.json();
         sessionId = data.session_id;
         localStorage.setItem(SESSION_KEY, sessionId);
+        history.pushState({}, '', '/chat/' + sessionId);
       } catch (e) {
         console.error('session create failed', e);
       }
@@ -154,7 +201,6 @@
     document.getElementById('new-chat-btn').addEventListener('click', async () => {
       sessionId = null;
       localStorage.removeItem(SESSION_KEY);
-      await ensureSession();
       // 채팅 영역 초기화 (온보딩 복원)
       const msgs = document.getElementById('chat-messages');
       msgs.innerHTML = `
@@ -185,6 +231,8 @@
           </div>
         </div>`;
       bindCategoryCards();
+      // 새 세션 생성 및 URL 업데이트
+      await ensureSession();
     });
 
     // ── 카테고리 카드 클릭 ────────────────────────────────────

@@ -402,6 +402,40 @@ def generate(question: str, retrieved: list[dict]) -> dict:
     return {"answer": answer, "latency_sec": round(time.time() - t0, 1)}
 
 
+# ── Gemini 답변 생성 ─────────────────────────────────────
+
+def generate_with_gemini(question: str, retrieved: list[dict], history: list[dict] | None = None) -> dict:
+    """Gemini API로 최종 법률 정보 답변 생성. GEMINI_API_KEY 없으면 Ollama fallback."""
+    import google.generativeai as genai
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        return generate(question, retrieved)  # Ollama fallback
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-2.0-flash")
+
+    ctx = "\n\n".join(_format_chunk(r) for r in retrieved)
+    system_text = SYSTEM_PROMPT + f"\n\n[참고 법령·판례 자료]\n{ctx}"
+
+    # Build chat history for Gemini (last 6 messages)
+    chat_history = []
+    if history:
+        for h in history[-6:]:
+            role = "user" if h["role"] == "user" else "model"
+            chat_history.append({"role": role, "parts": [h["content"]]})
+
+    t0 = time.time()
+    try:
+        response = model.generate_content(
+            chat_history + [{"role": "user", "parts": [question]}],
+            system_instruction=system_text,
+        )
+        answer = response.text.strip()
+    except Exception as e:
+        return generate(question, retrieved)  # fallback on error
+    return {"answer": answer, "latency_sec": round(time.time() - t0, 1)}
+
+
 # ── 평가 ────────────────────────────────────────────────
 
 def run_evaluation():

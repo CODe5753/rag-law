@@ -182,6 +182,113 @@ def rewrite_query(question: str, history: list[dict]) -> str:
         return question
 
 
+# ── Intake 분류 ──────────────────────────────────────────────
+
+def intake_classify(question: str, history: list[dict]) -> dict:
+    """Ollama로 "정보 충분?" 판단. 충분하면 {"action":"search"}, 아니면 {"action":"ask","reply":"질문"}."""
+    history_text = ""
+    for h in history:
+        prefix = "사용자" if h["role"] == "user" else "AI"
+        history_text += f"{prefix}: {h['content']}\n"
+
+    prompt = f"""당신은 한국 법률 정보 AI입니다. 사용자의 법률 상황을 파악하는 중입니다.
+
+대화 내역:
+{history_text if history_text else "(첫 번째 메시지)"}
+
+사용자: {question}
+
+판단: 법령·판례 검색에 필요한 핵심 정보가 충분한가?
+
+카테고리별 필요 정보:
+- 노동(해고/임금): 고용 기간, 사업장 규모(5인 이상?), 해고/미지급 사유, 증거 여부
+- 가족/이혼: 법률혼/사실혼 구분, 자녀 유무, 재산 규모, 귀책사유
+- 폭행: 가해자와의 관계, 부상 정도, 증거(CCTV/목격자/진단서)
+- 부동산: 전세/월세 구분, 보증금, 계약 위반 내용
+- 채권/사기: 금액, 증거(차용증/이체내역), 상대방 관계
+
+충분한 정보가 있으면 "SEARCH"만 출력.
+정보가 부족하면 가장 중요한 추가 질문 1개만 한국어로 출력 (질문 형태, 짧게).
+
+출력:"""
+
+    try:
+        import requests as _req
+        resp = _req.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+            timeout=20,
+        )
+        result = resp.json().get("response", "").strip()
+        if result.upper().startswith("SEARCH"):
+            return {"action": "search"}
+        return {"action": "ask", "reply": result}
+    except Exception:
+        return {"action": "search"}  # 실패 시 항상 검색
+
+
+# ── History 포함 Qdrant 실행 ─────────────────────────────────
+
+def run_qdrant_with_history(question: str, history: list[dict]) -> QueryResponse:
+    from qdrant_rag import load_embed_model, hybrid_retrieve, generate_with_gemini, _BM25_DISABLED, _bm25_data, _bm25_lock, build_bm25_from_qdrant
+    import qdrant_rag as _qr
+
+    model = load_embed_model()
+
+    # BM25
+    if _BM25_DISABLED:
+        bm25, chunk_ids = None, None
+    elif _bm25_data is not None:
+        bm25, chunk_ids = _bm25_data
+    elif _bm25_lock.acquire(blocking=False):
+        _bm25_lock.release()
+        bm25, chunk_ids = build_bm25_from_qdrant()
+    else:
+        bm25, chunk_ids = None, None
+
+    # Rewrite query
+    search_query = rewrite_query(question, history)
+
+    t0 = time.time()
+    try:
+        docs = hybrid_retrieve(search_query, model, bm25, chunk_ids)
+        gen = generate_with_gemini(question, docs, history)
+    finally:
+        _qr._kiwi = None
+
+    latency = round(time.time() - t0, 1)
+
+    retrieved_docs = [
+        RetrievedDoc(
+            law_name=d.get("law_name", ""),
+            article_num=d.get("article_num", ""),
+            text=d.get("text", ""),
+            source=d.get("source"),
+            reranker_score=d.get("reranker_score"),
+            is_relevant=True,
+        )
+        for d in docs
+    ]
+
+    answer = gen.get("answer", "")
+    if not answer.strip():
+        raise RuntimeError("답변 생성 실패")
+
+    return QueryResponse(
+        question=question,
+        answer=answer,
+        pipeline="qdrant",
+        latency_sec=latency,
+        cached=False,
+        retrieved_docs=retrieved_docs,
+        pipeline_trace=PipelineTrace(
+            nodes_executed=["retrieve", "generate"],
+            decision="generate",
+            grading_summary=None,
+        ),
+    )
+
+
 # ── 디스패처 ─────────────────────────────────────────────────
 
 def run_pipeline(question: str, pipeline: str) -> QueryResponse:

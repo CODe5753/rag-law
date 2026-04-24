@@ -4,9 +4,9 @@
 
 from __future__ import annotations
 import json
+import secrets
 import sqlite3
 import time
-import uuid
 from pathlib import Path
 
 DB_PATH = Path("data/sessions.db")
@@ -39,7 +39,7 @@ def init_db() -> None:
 
 
 def create_session() -> str:
-    sid = str(uuid.uuid4())
+    sid = secrets.token_urlsafe(24)
     ts = int(time.time())
     with _conn() as con:
         con.execute(
@@ -64,7 +64,7 @@ def add_message(
         )
 
 
-def get_history(session_id: str, last_n: int = 3) -> list[dict]:
+def get_history(session_id: str, last_n: int = 6) -> list[dict]:
     with _conn() as con:
         rows = con.execute(
             """
@@ -78,6 +78,29 @@ def get_history(session_id: str, last_n: int = 3) -> list[dict]:
             (session_id, last_n * 2),
         ).fetchall()
     return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
+def get_messages(session_id: str, limit: int = 100) -> list[dict]:
+    """세션 메시지 전체 반환 (세션 복원용)."""
+    with _conn() as con:
+        rows = con.execute(
+            """
+            SELECT role, content, retrieved_docs, ts FROM messages
+            WHERE session_id = ?
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (session_id, limit),
+        ).fetchall()
+    return [
+        {
+            "role": r["role"],
+            "content": r["content"],
+            "retrieved_docs": json.loads(r["retrieved_docs"]) if r["retrieved_docs"] else None,
+            "ts": r["ts"],
+        }
+        for r in rows
+    ]
 
 
 def get_sessions(limit: int = 20) -> list[dict]:

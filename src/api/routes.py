@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from api.schemas import QueryRequest, QueryResponse, RetrievedDoc, PipelineTrace, GradingSummary
 from api import cache as cache_module
-from api.pipeline_runner import run_pipeline, rewrite_query
+from api.pipeline_runner import run_pipeline, rewrite_query, intake_classify, run_qdrant_with_history
 from api import session_store
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -241,69 +241,44 @@ async def chat_stream(request: Request, session_id: str, question: str, pipeline
     async def event_gen():
         async with _query_semaphore:
             try:
-                # 1. 세션 히스토리 로드
-                history = await run_in_threadpool(session_store.get_history, session_id, 3)
+                # 1. 사용자 메시지 저장
+                await run_in_threadpool(session_store.add_message, session_id, "user", q)
 
-                # 2. 쿼리 재작성
-                rewritten = await run_in_threadpool(rewrite_query, q, history)
+                # 2. 이전 히스토리 로드 (방금 저장한 메시지 제외)
+                all_messages = await run_in_threadpool(session_store.get_messages, session_id)
+                prior_history = [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in all_messages[:-1]  # 방금 저장한 user 메시지 제외
+                ]
 
-                if pipeline == "crag":
-                    loop = asyncio.get_event_loop()
-                    queue: asyncio.Queue = asyncio.Queue()
-                    final_state_holder = {"state": None}
+                # 3. Intake 분류
+                classify = await run_in_threadpool(intake_classify, q, prior_history)
 
-                    def run_in_thread():
-                        try:
-                            from crag_rag import build_crag_graph
-                            app = build_crag_graph()
-                            initial_state = {
-                                "question": rewritten,
-                                "documents": [],
-                                "relevant_docs": [],
-                                "generation": "",
-                                "fallback_used": False,
-                                "grading_log": [],
-                            }
-                            merged: dict = dict(initial_state)
-                            for event in app.stream(initial_state):
-                                for node_name, partial in event.items():
-                                    if isinstance(partial, dict):
-                                        merged.update(partial)
-                                    asyncio.run_coroutine_threadsafe(
-                                        queue.put({"type": "node", "node": node_name}), loop
-                                    ).result()
-                            final_state_holder["state"] = merged
-                        except Exception as e:
-                            asyncio.run_coroutine_threadsafe(
-                                queue.put({"type": "error", "message": str(e)}), loop
-                            ).result()
-                        finally:
-                            asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
+                if classify["action"] == "ask":
+                    reply = classify["reply"]
+                    # AI 메시지 저장 (추가 질문)
+                    await run_in_threadpool(session_store.add_message, session_id, "assistant", reply)
+                    # Intake 버블 HTML 생성
+                    import html as _html
+                    intake_html = f"""
+<div class="flex justify-end mb-3">
+  <div class="max-w-[80%] bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm">{_html.escape(q)}</div>
+</div>
+<div class="flex justify-start mb-4">
+  <div class="max-w-[85%] space-y-2">
+    <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+      <div class="text-sm text-gray-800 leading-relaxed">{_html.escape(reply)}</div>
+    </div>
+  </div>
+</div>"""
+                    yield await sse_pack({"type": "done", "html": intake_html})
+                    return
 
-                    t0 = time.time()
-                    loop.run_in_executor(None, run_in_thread)
+                # 4. Search: RAG 실행
+                yield await sse_pack({"type": "node", "node": "retrieve"})
+                result = await run_in_threadpool(run_qdrant_with_history, q, prior_history)
 
-                    while True:
-                        item = await queue.get()
-                        if item is None:
-                            break
-                        yield await sse_pack(item)
-                        if item.get("type") == "error":
-                            return
-
-                    latency = round(time.time() - t0, 1)
-                    final_state = final_state_holder["state"]
-                    if final_state is None:
-                        yield await sse_pack({"type": "error", "message": "스트리밍 결과 없음"})
-                        return
-
-                    result = _build_crag_response(rewritten, final_state, latency)
-
-                else:
-                    yield await sse_pack({"type": "node", "node": "retrieve"})
-                    result = await run_in_threadpool(run_pipeline, rewritten, pipeline)
-
-                # 3. 세션에 저장
+                # 5. AI 답변 저장
                 docs_for_store = [
                     {
                         "law_name": d.law_name,
@@ -312,7 +287,6 @@ async def chat_stream(request: Request, session_id: str, question: str, pipeline
                     }
                     for d in (result.retrieved_docs or [])
                 ]
-                await run_in_threadpool(session_store.add_message, session_id, "user", q)
                 await run_in_threadpool(
                     session_store.add_message,
                     session_id,
@@ -321,7 +295,7 @@ async def chat_stream(request: Request, session_id: str, question: str, pipeline
                     docs_for_store,
                 )
 
-                # 4. 채팅 버블 HTML 생성
+                # 6. 채팅 버블 HTML 생성
                 html = templates.TemplateResponse(
                     request, "partials/chat_bubble.html",
                     {"result": result, "user_question": q}
@@ -340,6 +314,22 @@ async def chat_stream(request: Request, session_id: str, question: str, pipeline
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/chat/{session_id}", response_class=HTMLResponse)
+async def chat_session_page(request: Request, session_id: str):
+    manifest = cache_module.get_manifest()
+    return templates.TemplateResponse(request, "index.html", {
+        "categories": manifest.get("categories", []),
+        "ollama_model": OLLAMA_MODEL,
+        "initial_session_id": session_id,
+    })
+
+
+@router.get("/api/chat/{session_id}/messages")
+async def get_chat_messages(session_id: str):
+    messages = await run_in_threadpool(session_store.get_messages, session_id)
+    return messages
 
 
 # ── 비교 엔드포인트 ────────────────────────────────────────────
