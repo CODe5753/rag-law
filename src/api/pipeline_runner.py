@@ -220,13 +220,19 @@ def intake_classify(question: str, history: list[dict]) -> dict:
 출력 (SEARCH 또는 질문 1개만):"""
 
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types as gtypes
         api_key = os.getenv("GEMINI_API_KEY", "")
         if not api_key:
             raise ValueError("no GEMINI_API_KEY")
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-3-flash-preview")
-        resp = model.generate_content(prompt)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=gtypes.HttpOptions(timeout=20),
+        )
+        resp = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=prompt,
+        )
         result = resp.text.strip()
         if result.upper().startswith("SEARCH"):
             return {"action": "search"}

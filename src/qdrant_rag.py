@@ -406,33 +406,38 @@ def generate(question: str, retrieved: list[dict]) -> dict:
 
 def generate_with_gemini(question: str, retrieved: list[dict], history: list[dict] | None = None) -> dict:
     """Gemini API로 최종 법률 정보 답변 생성. GEMINI_API_KEY 없으면 Ollama fallback."""
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types as gtypes
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
-        return generate(question, retrieved)  # Ollama fallback
+        return generate(question, retrieved)
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-3-flash-preview")
+    client = genai.Client(
+        api_key=api_key,
+        http_options=gtypes.HttpOptions(timeout=30),
+    )
 
     ctx = "\n\n".join(_format_chunk(r) for r in retrieved)
     system_text = SYSTEM_PROMPT + f"\n\n[참고 법령·판례 자료]\n{ctx}"
 
-    # Build chat history for Gemini (last 6 messages)
-    chat_history = []
+    contents = []
     if history:
         for h in history[-6:]:
             role = "user" if h["role"] == "user" else "model"
-            chat_history.append({"role": role, "parts": [h["content"]]})
+            contents.append(gtypes.Content(role=role, parts=[gtypes.Part(text=h["content"])]))
+    contents.append(gtypes.Content(role="user", parts=[gtypes.Part(text=question)]))
 
     t0 = time.time()
     try:
-        response = model.generate_content(
-            chat_history + [{"role": "user", "parts": [question]}],
-            system_instruction=system_text,
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=contents,
+            config=gtypes.GenerateContentConfig(system_instruction=system_text),
         )
         answer = response.text.strip()
     except Exception as e:
-        return generate(question, retrieved)  # fallback on error
+        logger.warning("generate_with_gemini failed, fallback to Ollama: %s", e)
+        return generate(question, retrieved)
     return {"answer": answer, "latency_sec": round(time.time() - t0, 1)}
 
 
