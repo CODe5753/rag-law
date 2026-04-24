@@ -225,7 +225,7 @@ def intake_classify(question: str, history: list[dict]) -> dict:
         if not api_key:
             raise ValueError("no GEMINI_API_KEY")
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        model = genai.GenerativeModel("gemini-3-flash-preview")
         resp = model.generate_content(prompt)
         result = resp.text.strip()
         if result.upper().startswith("SEARCH"):

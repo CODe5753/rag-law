@@ -412,7 +412,7 @@ def generate_with_gemini(question: str, retrieved: list[dict], history: list[dic
         return generate(question, retrieved)  # Ollama fallback
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel("gemini-3-flash-preview")
 
     ctx = "\n\n".join(_format_chunk(r) for r in retrieved)
     system_text = SYSTEM_PROMPT + f"\n\n[참고 법령·판례 자료]\n{ctx}"
