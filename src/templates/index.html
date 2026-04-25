@@ -139,6 +139,7 @@
     const SESSION_KEY = 'rag_law_session_id';
     let sessionId = localStorage.getItem(SESSION_KEY);
     let streaming = false;
+    let sessionInitialized = false;
 
     marked.setOptions({ breaks: true });
 
@@ -228,6 +229,9 @@
 
     // ── 세션 초기화 ──────────────────────────────────────────
     async function ensureSession() {
+      if (sessionInitialized) return;
+      sessionInitialized = true;
+
       const urlSessionId = window.__INITIAL_SESSION_ID__;
       if (urlSessionId) {
         sessionId = urlSessionId;
@@ -236,7 +240,6 @@
         return;
       }
       if (sessionId) {
-        // Update URL if needed
         if (!location.pathname.includes(sessionId)) {
           history.replaceState({}, '', '/chat/' + sessionId);
         }
@@ -256,6 +259,7 @@
     // ── 새 상담 ──────────────────────────────────────────────
     document.getElementById('new-chat-btn').addEventListener('click', async () => {
       sessionId = null;
+      sessionInitialized = false;
       localStorage.removeItem(SESSION_KEY);
       const msgs = document.getElementById('chat-messages');
       msgs.innerHTML = `
