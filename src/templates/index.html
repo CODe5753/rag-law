@@ -202,6 +202,17 @@
       </div>`;
     }
 
+    function summaryBubbleHtml(text) {
+      return `<div class="flex justify-start mb-2">
+        <div class="max-w-[85%]">
+          <div class="bg-gray-50 border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-2.5">
+            <div class="text-xs text-gray-400 mb-1 font-medium">파악된 상황</div>
+            <div class="text-sm text-gray-600 leading-relaxed">${escapeHtml(text)}</div>
+          </div>
+        </div>
+      </div>`;
+    }
+
     // ── 세션 복원 ────────────────────────────────────────────
     async function restoreSession(sid) {
       try {
@@ -341,14 +352,20 @@
 
       const url = `/chat/stream?session_id=${encodeURIComponent(sessionId)}&question=${encodeURIComponent(question)}&pipeline=qdrant`;
 
-      function replaceTyping(html) {
-        const tb = document.getElementById(typingId);
+      let currentTypingId = typingId;
+
+      function replaceTyping(html, addNewTyping = false) {
+        const tb = document.getElementById(currentTypingId);
         if (tb) {
           const div = document.createElement('div');
           div.innerHTML = html;
           tb.replaceWith(div);
         } else {
           msgs.insertAdjacentHTML('beforeend', html);
+        }
+        if (addNewTyping) {
+          currentTypingId = 'typing-' + Date.now();
+          msgs.insertAdjacentHTML('beforeend', typingBubbleHtml(currentTypingId));
         }
         scrollToBottom();
       }
@@ -372,6 +389,9 @@
 
             if (evt.type === 'ask') {
               replaceTyping(intakeBubbleHtml(evt.reply));
+
+            } else if (evt.type === 'summary') {
+              replaceTyping(summaryBubbleHtml(evt.text), true);
 
             } else if (evt.type === 'done') {
               replaceTyping(aiBubbleHtml(evt.answer, evt.docs, evt.latency));

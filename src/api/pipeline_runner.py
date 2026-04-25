@@ -185,39 +185,44 @@ def rewrite_query(question: str, history: list[dict]) -> str:
 # ── Intake 분류 ──────────────────────────────────────────────
 
 def intake_classify(question: str, history: list[dict]) -> dict:
-    """Gemini로 "정보 충분?" 판단. 충분하면 {"action":"search"}, 아니면 {"action":"ask","reply":"질문"}."""
+    """Gemini로 상황 파악 완료 여부 판단.
+    충분하면 {"action":"search","summary":"상황요약"}, 아니면 {"action":"ask","reply":"질문(이유포함)"}"""
     ai_turns = sum(1 for h in history if h["role"] == "assistant")
 
-    # 2턴 이상 질문했으면 강제 검색
-    if ai_turns >= 2:
-        return {"action": "search"}
+    # 3턴 초과 시 강제 검색 (무한 루프 방지)
+    if ai_turns >= 3:
+        return {"action": "search", "summary": ""}
 
     history_text = ""
     for h in history:
         prefix = "사용자" if h["role"] == "user" else "AI"
         history_text += f"{prefix}: {h['content']}\n"
 
-    prompt = f"""당신은 한국 법률 정보 AI 어시스턴트입니다. 사용자의 법률 상황을 파악합니다.
+    prompt = f"""당신은 경험 많은 한국 법률 AI 상담사입니다. 사용자의 법률 상황을 파악하여 적절한 법령·판례를 검색하려 합니다.
 
 대화 내역:
 {history_text if history_text else "(대화 시작)"}
 
 사용자: {question}
 
+[역할]
+실제 법률 상담처럼 사용자의 상황을 파악하세요. 카테고리 체크리스트를 기계적으로 적용하지 마세요.
+이 사람의 구체적 상황에서 법적 판단에 실제로 필요한 정보가 무엇인지 판단하세요.
+
 [판단 기준]
-아래 카테고리별 핵심 정보가 충분히 제공되었으면 "SEARCH"만 출력하세요.
-정보가 부족하면 가장 중요한 추가 질문 1개만 한국어로 출력하세요 (질문 형태, 짧게).
-사용자가 "모르겠다", "없다" 등으로 제공 불가를 표현하면 "SEARCH"를 출력하세요.
+1. 지금까지 파악된 정보로 어떤 법령·판례를 검색해야 할지 충분히 알 수 있으면 → SEARCH
+2. 검색 방향을 결정하는 데 꼭 필요한 정보가 빠져 있으면 → 추가 질문 1개
+   - 질문할 때 반드시 왜 이 정보가 필요한지 1문장 설명 포함
+   - 예시: "임대인이 수선을 거부한 경위를 알아야 법적 의무 위반 여부를 판단할 수 있어서요. 거부 의사를 어떻게 전달받으셨나요?"
+   - 이 사람 상황과 무관한 정보는 절대 묻지 마세요 (예: 수선의무 분쟁에서 전세/월세 구분, 보증금 액수)
+3. 사용자가 "모르겠다", "없다", "잘 모르겠어요" 등으로 제공 불가를 표현하면 → SEARCH
+4. AI가 이미 2회 이상 추가 질문을 했으면 → SEARCH
 
-카테고리별 필요 정보:
-- 노동(해고/임금): 고용 기간, 사업장 규모(5인 이상?), 해고/미지급 사유
-- 가족/이혼: 법률혼/사실혼 구분, 자녀 유무, 귀책사유
-- 폭행: 가해자와의 관계, 부상 정도, 증거 여부
-- 부동산(임대차): 전세/월세 구분, 보증금 규모
-- 채권/사기: 금액, 증거(차용증/이체내역) 여부
-- 교통사고: 쌍방 과실 여부, 보험 처리 여부
+[출력 형식]
+- 추가 질문: 이유(1문장) + 질문(1문장), 총 2~3문장 이내로만 출력
+- 검색 준비 완료: "SEARCH: " 뒤에 지금까지 파악된 상황을 1~2문장으로 요약
 
-출력 (SEARCH 또는 질문 1개만):"""
+출력:"""
 
     try:
         from google import genai
@@ -235,11 +240,13 @@ def intake_classify(question: str, history: list[dict]) -> dict:
         )
         result = resp.text.strip()
         if result.upper().startswith("SEARCH"):
-            return {"action": "search"}
+            parts = result.split(":", 1)
+            summary = parts[1].strip() if len(parts) > 1 else ""
+            return {"action": "search", "summary": summary}
         return {"action": "ask", "reply": result}
     except Exception as e:
         logger.warning("intake_classify Gemini failed, fallback to search: %s", e)
-        return {"action": "search"}
+        return {"action": "search", "summary": ""}
 
 
 # ── History 포함 Qdrant 실행 ─────────────────────────────────

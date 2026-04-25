@@ -261,7 +261,12 @@ async def chat_stream(request: Request, session_id: str, question: str, pipeline
                     yield await sse_pack({"type": "ask", "reply": reply})
                     return
 
-                # 4. Search: RAG 실행
+                # 4. 상황 요약 전송 (검색 전)
+                situation_summary = classify.get("summary", "")
+                if situation_summary:
+                    yield await sse_pack({"type": "summary", "text": situation_summary})
+
+                # 5. Search: RAG 실행
                 yield await sse_pack({"type": "node", "node": "retrieve"})
                 result = await run_in_threadpool(run_qdrant_with_history, q, prior_history)
 
