@@ -311,6 +311,92 @@ def run_qdrant_with_history(question: str, history: list[dict]) -> QueryResponse
     )
 
 
+# ── 쿼리 라우팅 ──────────────────────────────────────────────
+
+def route_query(question: str, history: list[dict]) -> str:
+    """질문 유형 분류: 'rag' (법령·판례 검색) | 'general' (일반 법률 지식으로 답변 가능)"""
+    if not history:
+        return "rag"  # 첫 질문은 항상 RAG
+
+    history_text = "\n".join(
+        f"{'사용자' if h['role'] == 'user' else 'AI'}: {h['content'][:200]}"
+        for h in history[-6:]
+    )
+
+    prompt = f"""한국 법률 AI 상담 라우터입니다. 사용자의 새 질문이 법령·판례 검색이 필요한지 판단하세요.
+
+대화 내역:
+{history_text}
+
+사용자 새 질문: {question}
+
+[RAG] 법령·판례 검색이 필요한 경우:
+- 새로운 법적 쟁점 (적용 법령, 권리·의무 여부, 처벌 수위)
+- 처음으로 법적 상황을 설명하는 경우
+
+[GENERAL] 일반 법률 지식으로 충분한 경우:
+- 법률 절차·기간·비용 ("얼마나 걸려요?", "비용은 얼마나 드나요?")
+- 이미 파악된 상황에서 다음 행동 조언 ("어떻게 해야 하나요?", "증거는 어떻게 수집하나요?")
+- 이전 AI 답변에 대한 후속 질문이나 보충 설명 요청
+
+출력: RAG 또는 GENERAL (한 단어만)"""
+
+    try:
+        from google import genai
+        from google.genai import types as gtypes
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        if not api_key:
+            return "rag"
+        client = genai.Client(api_key=api_key, http_options=gtypes.HttpOptions(timeout=10000))
+        resp = client.models.generate_content(model="gemini-3-flash-preview", contents=prompt)
+        result = resp.text.strip().upper()
+        if "GENERAL" in result:
+            return "general"
+        return "rag"
+    except Exception as e:
+        logger.warning("route_query failed, fallback to rag: %s", e)
+        return "rag"
+
+
+def run_general_answer(question: str, history: list[dict]) -> str:
+    """RAG 없이 Gemini 일반 법률 지식으로 답변 (절차·비용·기간·후속 조언)"""
+    from google import genai
+    from google.genai import types as gtypes
+
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        logger.warning("run_general_answer: no GEMINI_API_KEY")
+        return "현재 답변을 생성할 수 없습니다."
+
+    system_text = """당신은 한국 법률 AI 상담 어시스턴트입니다.
+대화 맥락을 바탕으로 절차·비용·기간·다음 단계 등 실무적인 법률 정보를 안내합니다.
+법령 원문 검색 없이 일반적인 한국 법률 실무 지식으로 답변 가능한 상황입니다.
+
+[답변 원칙]
+- 한국 법률 실무 기준 일반적인 정보를 제공합니다
+- 금액·기간은 사건 복잡도에 따라 달라질 수 있음을 명시하세요
+- 답변 마지막에 "구체적인 법적 판단과 책임은 변호사와 상담하시기 바랍니다."를 추가하세요"""
+
+    client = genai.Client(api_key=api_key, http_options=gtypes.HttpOptions(timeout=30000))
+
+    contents = []
+    for h in (history or [])[-6:]:
+        role = "user" if h["role"] == "user" else "model"
+        contents.append(gtypes.Content(role=role, parts=[gtypes.Part(text=h["content"])]))
+    contents.append(gtypes.Content(role="user", parts=[gtypes.Part(text=question)]))
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=contents,
+            config=gtypes.GenerateContentConfig(system_instruction=system_text),
+        )
+        return response.text.strip()
+    except Exception as e:
+        logger.warning("run_general_answer Gemini failed: %s", e)
+        return "일시적으로 답변을 생성할 수 없습니다. 잠시 후 다시 시도해주세요."
+
+
 # ── 디스패처 ─────────────────────────────────────────────────
 
 def run_pipeline(question: str, pipeline: str) -> QueryResponse:

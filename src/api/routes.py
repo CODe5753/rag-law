@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from api.schemas import QueryRequest, QueryResponse, RetrievedDoc, PipelineTrace, GradingSummary
 from api import cache as cache_module
-from api.pipeline_runner import run_pipeline, rewrite_query, intake_classify, run_qdrant_with_history
+from api.pipeline_runner import run_pipeline, rewrite_query, intake_classify, run_qdrant_with_history, route_query, run_general_answer
 from api import session_store
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -251,7 +251,19 @@ async def chat_stream(request: Request, session_id: str, question: str, pipeline
                     for m in all_messages[:-1]  # 방금 저장한 user 메시지 제외
                 ]
 
-                # 3. Intake 분류
+                # 3. 쿼리 라우팅 (history가 있을 때만 — 첫 질문은 항상 RAG)
+                if prior_history:
+                    route = await run_in_threadpool(route_query, q, prior_history)
+                else:
+                    route = "rag"
+
+                if route == "general":
+                    answer = await run_in_threadpool(run_general_answer, q, prior_history)
+                    await run_in_threadpool(session_store.add_message, session_id, "assistant", answer)
+                    yield await sse_pack({"type": "done", "answer": answer, "docs": [], "latency": 0})
+                    return
+
+                # 4. Intake 분류 (RAG 라우트일 때만)
                 classify = await run_in_threadpool(intake_classify, q, prior_history)
 
                 if classify["action"] == "ask":
@@ -261,12 +273,12 @@ async def chat_stream(request: Request, session_id: str, question: str, pipeline
                     yield await sse_pack({"type": "ask", "reply": reply})
                     return
 
-                # 4. 상황 요약 전송 (검색 전)
+                # 5. 상황 요약 전송 (검색 전)
                 situation_summary = classify.get("summary", "")
                 if situation_summary:
                     yield await sse_pack({"type": "summary", "text": situation_summary})
 
-                # 5. Search: RAG 실행
+                # 6. Search: RAG 실행
                 yield await sse_pack({"type": "node", "node": "retrieve"})
                 result = await run_in_threadpool(run_qdrant_with_history, q, prior_history)
 
