@@ -32,7 +32,7 @@ from rank_bm25 import BM25Okapi
 import embedding_backend
 
 # sentence_transformers/torch는 local 모드일 때만 import (메모리 절감)
-if not embedding_backend.is_ollama_backend():
+if not embedding_backend.is_remote_backend():
     from sentence_transformers import SentenceTransformer
 else:
     SentenceTransformer = None
@@ -141,8 +141,8 @@ def _get_bge_reranker():
 # ── 임베딩 모델 ─────────────────────────────────────────
 
 def load_embed_model():
-    if embedding_backend.is_ollama_backend():
-        print(f"[임베딩] Ollama 백엔드 사용: {embedding_backend.OLLAMA_EMBEDDING_MODEL}")
+    if embedding_backend.is_remote_backend():
+        print(f"[임베딩] 원격 백엔드 사용: {embedding_backend.EMBEDDING_BACKEND}")
         return None
     print(f"[임베딩] 모델 로드: {EMBED_MODEL_NAME}")
     t0 = time.time()

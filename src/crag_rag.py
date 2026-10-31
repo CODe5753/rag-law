@@ -31,7 +31,7 @@ from langgraph.graph import StateGraph, END
 import embedding_backend
 
 # sentence_transformers/torch는 local 모드일 때만 import (메모리 절감)
-if not embedding_backend.is_ollama_backend():
+if not embedding_backend.is_remote_backend():
     from sentence_transformers import SentenceTransformer
 else:
     SentenceTransformer = None
@@ -106,7 +106,7 @@ _bge_reranker = None
 
 def _get_model():
     global _model
-    if embedding_backend.is_ollama_backend():
+    if embedding_backend.is_remote_backend():
         return None
     if _model is None:
         print(f"[임베딩] 모델 로드: {EMBED_MODEL_NAME}")

@@ -394,7 +394,10 @@ async def ready():
         except Exception:
             pass
 
-    ready_ok = configured() and (ollama_ok if embedding_backend.is_ollama_backend() else True)
+    embedding_ok = ollama_ok if embedding_backend.is_ollama_backend() else True
+    if embedding_backend.EMBEDDING_BACKEND == "http":
+        embedding_ok = await run_in_threadpool(embedding_backend.http_backend_ready)
+    ready_ok = configured() and embedding_ok
     status_code = 200 if ready_ok else 503
     from fastapi.responses import JSONResponse
     return JSONResponse(
@@ -402,6 +405,7 @@ async def ready():
         content={
             "status": "ready" if ready_ok else "unavailable",
             "ollama_connected": ollama_ok,
+            "embedding_connected": embedding_ok,
             "cached_samples": cache_module.cache_count(),
             "model": OLLAMA_MODEL,
         },
