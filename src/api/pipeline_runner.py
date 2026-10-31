@@ -12,8 +12,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 
 # src/ 디렉토리를 경로에 추가 (crag_rag, qdrant_rag import용)
 _SRC = Path(__file__).parent.parent
@@ -67,7 +65,7 @@ def run_crag(question: str) -> QueryResponse:
 
     answer = result.get("generation", "")
     if not answer.strip():
-        raise RuntimeError("Ollama 서버에 연결할 수 없거나 응답 생성에 실패했습니다. ollama serve 상태를 확인하세요.")
+        raise RuntimeError("AI Gateway 응답 생성에 실패했습니다.")
 
     return QueryResponse(
         question=question,
@@ -131,7 +129,7 @@ def run_qdrant(question: str) -> QueryResponse:
 
     answer = gen.get("answer", "")
     if not answer.strip():
-        raise RuntimeError("Ollama 서버에 연결할 수 없거나 응답 생성에 실패했습니다. ollama serve 상태를 확인하세요.")
+        raise RuntimeError("AI Gateway 응답 생성에 실패했습니다.")
 
     return QueryResponse(
         question=question,
@@ -151,7 +149,7 @@ def run_qdrant(question: str) -> QueryResponse:
 # ── 쿼리 재작성 ──────────────────────────────────────────────
 
 def rewrite_query(question: str, history: list[dict]) -> str:
-    """history가 없으면 question 그대로 반환. 있으면 Ollama로 독립 쿼리 생성."""
+    """history가 없으면 question 그대로 반환. 있으면 Gateway로 독립 쿼리 생성."""
     if not history:
         return question
 
@@ -167,19 +165,8 @@ def rewrite_query(question: str, history: list[dict]) -> str:
         "재작성된 질문만 출력하세요."
     )
 
-    try:
-        import requests as _req
-        resp = _req.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        rewritten = resp.json().get("response", "").strip()
-        return rewritten if rewritten else question
-    except Exception as e:
-        logger.warning("rewrite_query failed, using original: %s", e)
-        return question
+    from ai_gateway import generate
+    return generate('rewrite', prompt)
 
 
 # ── Intake 분류 ──────────────────────────────────────────────

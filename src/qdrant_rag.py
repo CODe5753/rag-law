@@ -39,8 +39,6 @@ else:
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 EMBED_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
@@ -386,7 +384,7 @@ def hybrid_retrieve(
 
 # ── 답변 생성 ────────────────────────────────────────────
 
-def generate(question: str, retrieved: list[dict]) -> dict:
+def generate(question: str, retrieved: list[dict], history: list[dict] | None = None) -> dict:
     ctx = "\n\n".join(_format_chunk(r) for r in retrieved)
     prompt = f"""{SYSTEM_PROMPT}
 
@@ -398,43 +396,39 @@ def generate(question: str, retrieved: list[dict]) -> dict:
 
 [답변]"""
     t0 = time.time()
-    try:
-        resp = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=120,
-        )
-        resp.raise_for_status()
-        answer = resp.json().get("response", "").strip()
-    except Exception as e:
-        answer = f"[오류] {e}"
+    from ai_gateway import generate as gateway_generate
+    answer = gateway_generate('answer', prompt, history=history)
     return {"answer": answer, "latency_sec": round(time.time() - t0, 1)}
 
 
 # ── Gemini 답변 생성 ─────────────────────────────────────
 
 def generate_with_gemini(question: str, retrieved: list[dict], history: list[dict] | None = None) -> dict:
-    """Gemini API로 최종 법률 정보 답변 생성. GEMINI_API_KEY 없으면 Ollama fallback."""
-    from google import genai
-    from google.genai import types as gtypes
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        return generate(question, retrieved)
+    """Gemini API로 최종 법률 정보 답변 생성. GEMINI_API_KEY 없으면 Gateway fallback."""
+    if not os.getenv("GEMINI_API_KEY", ""):
+        return generate(question, retrieved, history)
+    try:
+        from google import genai
+        from google.genai import types as gtypes
+        api_key = os.getenv("GEMINI_API_KEY", "")
 
-    client = genai.Client(
-        api_key=api_key,
-        http_options=gtypes.HttpOptions(timeout=30000),
-    )
+        client = genai.Client(
+            api_key=api_key,
+            http_options=gtypes.HttpOptions(timeout=30000),
+        )
 
-    ctx = "\n\n".join(_format_chunk(r) for r in retrieved)
-    system_text = SYSTEM_PROMPT + f"\n\n[참고 법령·판례 자료]\n{ctx}"
+        ctx = "\n\n".join(_format_chunk(r) for r in retrieved)
+        system_text = SYSTEM_PROMPT + f"\n\n[참고 법령·판례 자료]\n{ctx}"
 
-    contents = []
-    if history:
-        for h in history[-6:]:
-            role = "user" if h["role"] == "user" else "model"
-            contents.append(gtypes.Content(role=role, parts=[gtypes.Part(text=h["content"])]))
-    contents.append(gtypes.Content(role="user", parts=[gtypes.Part(text=question)]))
+        contents = []
+        if history:
+            for h in history[-6:]:
+                role = "user" if h["role"] == "user" else "model"
+                contents.append(gtypes.Content(role=role, parts=[gtypes.Part(text=h["content"])]))
+        contents.append(gtypes.Content(role="user", parts=[gtypes.Part(text=question)]))
+
+    except Exception:
+        return generate(question, retrieved, history)
 
     t0 = time.time()
     try:
@@ -445,8 +439,8 @@ def generate_with_gemini(question: str, retrieved: list[dict], history: list[dic
         )
         answer = response.text.strip()
     except Exception as e:
-        logger.warning("generate_with_gemini failed, fallback to Ollama: %s", e)
-        return generate(question, retrieved)
+        logger.warning("generate_with_gemini failed; using AI Gateway")
+        return generate(question, retrieved, history)
     return {"answer": answer, "latency_sec": round(time.time() - t0, 1)}
 
 

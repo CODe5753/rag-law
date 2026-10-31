@@ -1,0 +1,176 @@
+{
+  "project": "rag-law",
+  "branch": "main",
+  "head": "83b35db2f2d0100d4faa5f53ecb3dfe0edf1a244",
+  "production_branch": "main",
+  "test_branch": null,
+  "remote_comparison": {
+    "origin_main": "f7505d83e9fea543b4c6dfa3ed812925c5b4e14e",
+    "ahead": 1,
+    "behind": 0,
+    "verification": "git ls-remote origin refs/heads/main matches local origin/main; fetch denied writing .git/FETCH_HEAD",
+    "unpublished_commit": "83b35db reranker research; EXCLUDED from promotion"
+  },
+  "preexisting_changes": [
+    " M .gitignore",
+    " D README.md",
+    " M src/crag_rag.py",
+    " M src/monitor.py",
+    "?? Dockerfile.patch",
+    "?? docs/design/01-memory-module.md",
+    "?? docs/design/02-planner-toolcalling.md",
+    "?? docs/design/03-eval-reliability-observability.md",
+    "?? docs/design/04-medical-benchmark.md",
+    "?? docs/design/artifacts/",
+    "?? docs/design/reviews/",
+    "?? docs/mvp_categories.md",
+    "?? reranker_service/",
+    "?? run_pipeline.sh",
+    "?? src/api_collector.py",
+    "?? src/discord_alert.py",
+    "?? src/multi_ingest.py",
+    "?? src/pipeline_db.py"
+  ],
+  "changed_files": [
+    "src/ai_gateway.py",
+    "src/gateway_transport.py",
+    "src/gateway_probe.py",
+    "src/api/pipeline_runner.py",
+    "src/api/routes.py",
+    "src/api/schemas.py",
+    "src/qdrant_rag.py",
+    "src/crag_rag.py",
+    "src/templates/partials/error.html",
+    "tests/test_gateway.py",
+    "AI_GATEWAY_ROLLOUT.md",
+    "AI_GATEWAY_ROLLOUT.json"
+  ],
+  "publish_allowlist": [
+    "src/ai_gateway.py",
+    "src/gateway_transport.py",
+    "src/gateway_probe.py",
+    "src/api/pipeline_runner.py",
+    "src/api/routes.py",
+    "src/api/schemas.py",
+    "src/qdrant_rag.py",
+    "src/crag_rag.py",
+    "src/templates/partials/error.html",
+    "tests/test_gateway.py",
+    "AI_GATEWAY_ROLLOUT.md",
+    "AI_GATEWAY_ROLLOUT.json"
+  ],
+  "required_routes": [
+    "rewrite",
+    "answer",
+    "crag-grade",
+    "crag-answer",
+    "crag-fallback"
+  ],
+  "routes_project": "rag-law",
+  "provider_requirement": "parent must bind each route to Codex; client does not send provider/model",
+  "promotion": {
+    "patch": ".hermes/gateway-promotion.patch",
+    "base": "origin/main f7505d8",
+    "includes_preexisting_dependency": "src/crag_rag.py one-line hybrid_retrieve argument correction required by actual caller; no other preexisting edits or ahead commit included",
+    "verification": "git apply --check and apply passed in isolated origin/main source; all 7 tests passed without ahead commit or unrelated changes"
+  },
+  "tests": [
+    {
+      "command": "PYTHON_DOTENV_DISABLED=1 EMBEDDING_BACKEND=ollama .venv/bin/python -m unittest discover -s tests -v",
+      "result": "7 passed; simulated transport and synthetic external retrieval/search/Gemini failure"
+    },
+    {
+      "command": ".venv/bin/python src/gateway_probe.py --simulated",
+      "result": "passed 6 calls across 5 task IDs; UUIDs synthetic, not live evidence"
+    },
+    {
+      "command": "ast.parse of 8 modified/new Python modules; git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 EMBEDDING_BACKEND=local PYTHONPATH=src .venv/bin/python (embedding_backend.encode_query synthetic text)",
+      "result": "cached BAAI/bge-m3: dimension 1024, norm 1.0, finite=True; no download or reindex"
+    },
+    {
+      "command": "kubectl exec read-only Qdrant collection config GET",
+      "result": "legal_statutes, legal_interpretation, case_law all size=1024 distance=Cosine"
+    },
+    {
+      "command": "isolated origin/main + promotion patch: unittest discover -s tests -v",
+      "result": "7 passed; no ahead commit or unrelated untracked source required"
+    }
+  ],
+  "live_probe": {
+    "script": "src/gateway_probe.py",
+    "command": "kubectl -n rag-law exec deployment/rag-law-demo -- python src/gateway_probe.py",
+    "requirements": [
+      "parent provision project token via AI_GATEWAY_TOKEN or AI_GATEWAY_TOKEN_FILE",
+      "register five routes to Codex",
+      "promote narrow patch and deploy new image",
+      "run from deployed artifact; collect mode live-gateway/synthetic-retrieval and real audit UUIDs"
+    ],
+    "executed": false,
+    "scope": "actual run_qdrant, run_qdrant_with_history, run_crag and CRAG fallback; synthetic retrieval/search and forced Gemini failure; no DB/session writes or external paid calls",
+    "not_tested": [
+      "real retrieval",
+      "legal correctness",
+      "live Gateway authorization/provider resolution"
+    ]
+  },
+  "deployment": {
+    "namespace": "rag-law",
+    "workload": "deployment/rag-law-demo",
+    "image": "ghcr.io/code5753/rag-law:sha-f7505d8 observed live",
+    "source_sync": ".github/workflows/deploy.yml main -> arm64 GHCR image -> homelab-gitops/rag-law/deployment.yaml -> ArgoCD automated sync",
+    "PVC": [
+      "hf-model-cache",
+      "rag-law-sessions"
+    ],
+    "rollback": "parent restore image sha-f7505d8 in GitOps; preserve existing Ollama embedding and reranker settings; no data migration",
+    "parent_patch": {
+      "AI_GATEWAY_URL": "http://100.110.193.60:3000",
+      "AI_GATEWAY_TOKEN": "secretKeyRef rag-law-ai-gateway / AI_GATEWAY_TOKEN (proposed name, parent provisions)"
+    },
+    "readiness": "Gateway credential configuration plus existing Ollama embedding tags reachability; NOT inference health; live probe mandatory"
+  },
+  "remaining_ollama": {
+    "generation": {
+      "production_consumers": [],
+      "offline_or_research": [
+        "src/naive_rag.py",
+        "src/advanced_rag.py",
+        "src/langchain_rag.py",
+        "src/evaluator.py",
+        "src/eval_benchmark.py",
+        "src/eval_benchmark_v2.py",
+        "src/ragas_eval.py",
+        "src/build_eval_qa.py",
+        "src/autorag_prep.py",
+        "src/autorag_config.yaml",
+        "src/test_env.py"
+      ]
+    },
+    "embedding": [
+      "src/embedding_backend.py production EMBEDDING_BACKEND=ollama bge-m3 unchanged",
+      "offline evaluation OllamaEmbeddings retained"
+    ],
+    "gemini": "primary chat intake/router/general/history answers retained; history-answer failure now Gateway, no paid live calls made",
+    "reranker": "remote http://host.lima.internal:11435 retained unchanged"
+  },
+  "embedding_compatibility": {
+    "selection": "local dispatch verified with cached sentence-transformer; default local; deployment explicit ollama",
+    "shape": "1024 normalized vs live 1024/Cosine compatible",
+    "semantic_equivalence": "not proven across Ollama F16 and sentence-transformer weights/tokenization; no switch authorized by this evidence",
+    "production_blockers": [
+      "requirements-docker.txt lacks sentence-transformers/torch",
+      "offline model cache and 3Gi memory capacity must be verified before separate local migration"
+    ],
+    "reindex": false
+  },
+  "blockers": [
+    "parent route/token provisioning and real deployed-caller probe still required; this phase forbids child rollout/live probe",
+    "full fetch blocked by .git filesystem restriction; fresh ls-remote hash verified instead",
+    "local embedding production switch gated separately; unchanged"
+  ],
+  "status": "ready_for_parent_verification"
+}

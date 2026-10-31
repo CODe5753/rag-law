@@ -26,9 +26,9 @@ class PipelineTrace(BaseModel):
 
 
 class HardwareInfo(BaseModel):
-    model: str = "exaone3.5:7.8b"
+    model: str = "route-dependent"
     device: str = "Mac Mini M2 16GB"
-    inference: str = "Ollama (local)"
+    inference: str = "AI Gateway (Codex) / Gemini"
 
 
 class QueryRequest(BaseModel):

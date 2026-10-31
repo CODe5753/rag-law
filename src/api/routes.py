@@ -19,7 +19,7 @@ from api.pipeline_runner import run_pipeline, rewrite_query, intake_classify, ru
 from api import session_store
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
+OLLAMA_MODEL = "gateway-codex"
 
 router = APIRouter()
 templates = Jinja2Templates(directory="src/templates")
@@ -112,7 +112,7 @@ def _build_crag_response(question: str, final_state: dict, latency: float) -> Qu
 
     answer = final_state.get("generation", "")
     if not answer.strip():
-        raise RuntimeError("Ollama 서버 응답 생성 실패")
+        raise RuntimeError("AI Gateway 응답 생성 실패")
 
     return QueryResponse(
         question=question,
@@ -383,20 +383,24 @@ async def health():
 
 @router.get("/api/ready")
 async def ready():
-    """Readiness probe — Ollama 연결 확인. 실패 시 트래픽 차단 (pod 재시작 X)."""
+    """Configuration readiness plus embedding dependency; live inference is a rollout gate."""
+    from ai_gateway import configured
+    import embedding_backend
     ollama_ok = False
-    try:
-        r = await run_in_threadpool(_requests.get, f"{OLLAMA_HOST}/api/tags", timeout=2)
-        ollama_ok = r.status_code == 200
-    except Exception:
-        pass
+    if embedding_backend.is_ollama_backend():
+        try:
+            r = await run_in_threadpool(_requests.get, f"{OLLAMA_HOST}/api/tags", timeout=2)
+            ollama_ok = r.status_code == 200
+        except Exception:
+            pass
 
-    status_code = 200 if ollama_ok else 503
+    ready_ok = configured() and (ollama_ok if embedding_backend.is_ollama_backend() else True)
+    status_code = 200 if ready_ok else 503
     from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=status_code,
         content={
-            "status": "ready" if ollama_ok else "unavailable",
+            "status": "ready" if ready_ok else "unavailable",
             "ollama_connected": ollama_ok,
             "cached_samples": cache_module.cache_count(),
             "model": OLLAMA_MODEL,

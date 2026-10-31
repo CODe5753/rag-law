@@ -36,8 +36,6 @@ if not embedding_backend.is_ollama_backend():
 else:
     SentenceTransformer = None
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 QDRANT_PATH = Path("./qdrant_data")
 CHUNKS_PATH = Path("data/processed/chunks.json")
@@ -158,20 +156,7 @@ def _get_bge_reranker():
     return _bge_reranker if _bge_reranker is not False else None
 
 
-# ── Ollama 유틸 ───────────────────────────────────────────
-
-def ollama_call(prompt: str, timeout: int = 90) -> str:
-    try:
-        resp = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        return resp.json().get("response", "").strip()
-    except Exception as e:
-        print(f"  [WARN] Ollama 실패: {e}")
-        return ""
+from ai_gateway import generate as gateway_generate, grade as gateway_grade, GatewayError
 
 
 def extract_score(text: str) -> float:
@@ -203,7 +188,7 @@ def retrieve(state: CRAGState) -> CRAGState:
 
     # CRAG는 더 많은 후보를 채점하기 위해 top_k_candidate를 늘림
     docs = hybrid_retrieve(
-        question, model, chunks, bm25, chunk_ids,
+        question, model, bm25, chunk_ids,
         top_k_candidate=20,
         top_k_final=8,   # 채점 후 필터링하므로 더 많이 가져옴
     )
@@ -238,9 +223,8 @@ def grade_documents(state: CRAGState) -> CRAGState:
 [법령 조문]
 {doc['text']}
 
-관련성을 0.0(전혀 무관)에서 1.0(매우 관련) 사이 점수로 "점수: X.X" 형식으로만 출력하세요."""
-            response = ollama_call(prompt)
-            score = extract_score(response)
+관련성을 0.0(전혀 무관)에서 1.0(매우 관련) 사이의 숫자로 평가하세요."""
+            score = gateway_grade(prompt)
             is_relevant = score >= RELEVANCE_THRESHOLD
             graded_by = "llm"
 
@@ -294,7 +278,7 @@ def generate(state: CRAGState) -> CRAGState:
 
 [답변]"""
 
-    answer = ollama_call(prompt)
+    answer = gateway_generate("crag-answer", prompt)
     print(f"  [generate] 답변 생성 완료 ({len(answer)}자)")
     return {**state, "generation": answer, "fallback_used": False}
 
@@ -323,11 +307,13 @@ def fallback(state: CRAGState) -> CRAGState:
 {question}
 
 [답변]"""
-            answer = ollama_call(prompt)
+            answer = gateway_generate("crag-fallback", prompt)
             print(f"  [fallback] 웹 검색 활용")
             return {**state, "generation": answer, "fallback_used": True}
-        except Exception as e:
-            print(f"  [fallback] 웹 검색 실패: {e}")
+        except GatewayError:
+            raise
+        except Exception:
+            print("  [fallback] 웹 검색 실패")
 
     # 웹 검색 불가 → 거부 응답
     answer = f"수집된 법령 데이터에서 '{question}'에 대한 충분한 관련 조문을 찾을 수 없습니다. 법제처(law.go.kr) 또는 전문가에게 문의하세요."
