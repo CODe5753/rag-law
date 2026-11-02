@@ -18,7 +18,6 @@ from api import cache as cache_module
 from api.pipeline_runner import run_pipeline, rewrite_query, intake_classify, run_qdrant_with_history, route_query, run_general_answer
 from api import session_store
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = "gateway-codex"
 
 router = APIRouter()
@@ -383,30 +382,9 @@ async def health():
 
 @router.get("/api/ready")
 async def ready():
-    """Configuration readiness plus embedding dependency; live inference is a rollout gate."""
-    from ai_gateway import configured
-    import embedding_backend
-    ollama_ok = False
-    if embedding_backend.is_ollama_backend():
-        try:
-            r = await run_in_threadpool(_requests.get, f"{OLLAMA_HOST}/api/tags", timeout=2)
-            ollama_ok = r.status_code == 200
-        except Exception:
-            pass
-
-    embedding_ok = ollama_ok if embedding_backend.is_ollama_backend() else True
-    if embedding_backend.EMBEDDING_BACKEND == "http":
-        embedding_ok = await run_in_threadpool(embedding_backend.http_backend_ready)
-    ready_ok = configured() and embedding_ok
-    status_code = 200 if ready_ok else 503
+    """Gateway route/provider readiness; never call a model backend directly."""
+    from model_gateway import ready as gateway_ready
     from fastapi.responses import JSONResponse
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "status": "ready" if ready_ok else "unavailable",
-            "ollama_connected": ollama_ok,
-            "embedding_connected": embedding_ok,
-            "cached_samples": cache_module.cache_count(),
-            "model": OLLAMA_MODEL,
-        },
-    )
+    tasks=['answer','rewrite','crag-grade','crag-answer','crag-fallback','intake-classify','query-intent','general-answer','embedding','rerank']
+    ok=await run_in_threadpool(gateway_ready,tasks)
+    return JSONResponse(status_code=200 if ok else 503,content={'status':'ready' if ok else 'unavailable','gateway_connected':ok,'embedding_connected':ok,'cached_samples':cache_module.cache_count(),'model':'gateway'})

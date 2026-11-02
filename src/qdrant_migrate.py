@@ -156,7 +156,7 @@ def search_qdrant(query_vec: list[float], top_k: int = 5, law_name: str = None) 
 
 def regression_check(model, top_k: int = 5) -> dict:
     """ChromaDB vs Qdrant 검색 결과 일치 여부 확인"""
-    from sentence_transformers import SentenceTransformer
+    from gateway_compat import GatewayEmbeddingModel
     test_queries = [
         "개인정보 수집 동의",
         "근로기준법 근로시간",
@@ -208,19 +208,19 @@ if __name__ == "__main__":
             print(f"  {k}: {v}")
 
         # 자동으로 회귀 검증
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer("BAAI/bge-m3")
+        from gateway_compat import GatewayEmbeddingModel
+        model = GatewayEmbeddingModel()
         reg = regression_check(model)
         print(f"\n회귀 검증: {reg['match_queries']}/{reg['total_queries']} 쿼리 일치")
 
     elif args.check:
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer("BAAI/bge-m3")
+        from gateway_compat import GatewayEmbeddingModel
+        model = GatewayEmbeddingModel()
         regression_check(model)
 
     elif args.filter_demo:
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer("BAAI/bge-m3")
+        from gateway_compat import GatewayEmbeddingModel
+        model = GatewayEmbeddingModel()
         vec = model.encode([args.filter_demo], normalize_embeddings=True).tolist()[0]
 
         print(f"\n[전체 검색] '{args.filter_demo}'")

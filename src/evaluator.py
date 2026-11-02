@@ -23,12 +23,11 @@ from pathlib import Path
 
 import requests
 import chromadb
-from sentence_transformers import SentenceTransformer
+from gateway_compat import GatewayEmbeddingModel
 import os
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 CHROMA_PATH = Path(os.getenv("CHROMA_PATH", "./chroma_data"))
 EMBED_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
@@ -64,18 +63,9 @@ EVAL_QA = [
 
 
 def ollama_call(prompt: str, timeout: int = 60) -> str:
-    """단순 Ollama 호출. 실패 시 빈 문자열 반환."""
-    try:
-        resp = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        return resp.json().get("response", "").strip()
-    except Exception as e:
-        print(f"    [WARN] Ollama 호출 실패: {e}")
-        return ""
+    """Legacy CLI name; only Gateway evaluation task is called."""
+    from ai_gateway import generate
+    return generate('evaluation',prompt,timeout=timeout)
 
 
 def extract_score(text: str) -> float | None:

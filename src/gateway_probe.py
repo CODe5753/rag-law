@@ -31,7 +31,6 @@ def run(simulated=False):
     import crag_rag as cr
     from api import pipeline_runner as runner
     from api.schemas import QueryResponse
-    from google import genai
 
     audit = []
     class Audit(logging.Handler):
@@ -56,10 +55,6 @@ def run(simulated=False):
         stack.enter_context(patch.object(cr, '_get_model', return_value=None))
         stack.enter_context(patch.object(cr, '_get_chunks', return_value=[dict(DOC)]))
         stack.enter_context(patch.object(cr, '_get_bm25', return_value=(None, None)))
-        # Force actual Gemini failure branch without external calls or real credentials.
-        stack.enter_context(patch.dict(os.environ, {'GEMINI_API_KEY': 'synthetic-unusable'}))
-        stack.enter_context(patch.object(genai, 'Client', return_value=SimpleNamespace(models=SimpleNamespace(
-            generate_content=lambda **kw: (_ for _ in ()).throw(RuntimeError('synthetic SDK failure'))))))
         with contextlib.redirect_stdout(io.StringIO()):
             for result in [runner.run_qdrant(QUESTION), runner.run_qdrant_with_history(QUESTION, HISTORY), runner.run_crag(QUESTION)]:
                 checked = QueryResponse.model_validate(result.model_dump())

@@ -27,10 +27,9 @@ from ragas import EvaluationDataset, SingleTurnSample, evaluate, RunConfig
 from ragas.metrics import Faithfulness, AnswerRelevancy, ContextRecall, ContextPrecision
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
-from langchain_community.chat_models import ChatOllama
-from langchain_community.embeddings import OllamaEmbeddings
+from gateway_langchain import GatewayChatModel
+from gateway_langchain import GatewayEmbeddings
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 QA_PATH = Path("data/autorag/qa_combined.json")
 OUT_DIR = Path("data/processed")
@@ -65,12 +64,8 @@ def build_ragas_dataset(samples: list[dict]) -> EvaluationDataset:
 def run_ragas(samples: list[dict], phase_name: str) -> dict:
     dataset = build_ragas_dataset(samples)
 
-    llm = LangchainLLMWrapper(ChatOllama(
-        model=OLLAMA_MODEL, base_url=OLLAMA_HOST, temperature=0,
-    ))
-    embeddings = LangchainEmbeddingsWrapper(OllamaEmbeddings(
-        model=OLLAMA_MODEL, base_url=OLLAMA_HOST,
-    ))
+    llm = LangchainLLMWrapper(GatewayChatModel(task="evaluation"))
+    embeddings = LangchainEmbeddingsWrapper(GatewayEmbeddings())
     metrics = [
         Faithfulness(llm=llm),
         AnswerRelevancy(llm=llm, embeddings=embeddings),

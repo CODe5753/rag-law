@@ -211,29 +211,12 @@ def intake_classify(question: str, history: list[dict]) -> dict:
 
 출력:"""
 
-    try:
-        from google import genai
-        from google.genai import types as gtypes
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        if not api_key:
-            raise ValueError("no GEMINI_API_KEY")
-        client = genai.Client(
-            api_key=api_key,
-            http_options=gtypes.HttpOptions(timeout=20000),
-        )
-        resp = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=prompt,
-        )
-        result = resp.text.strip()
-        if result.upper().startswith("SEARCH"):
-            parts = result.split(":", 1)
-            summary = parts[1].strip() if len(parts) > 1 else ""
-            return {"action": "search", "summary": summary}
-        return {"action": "ask", "reply": result}
-    except Exception as e:
-        logger.warning("intake_classify Gemini failed, fallback to search: %s", e)
-        return {"action": "search", "summary": ""}
+    from ai_gateway import generate
+    result = generate('intake-classify', prompt, timeout=120)
+    if result.upper().startswith("SEARCH"):
+        parts = result.split(":", 1)
+        return {"action":"search","summary":parts[1].strip() if len(parts)>1 else ""}
+    return {"action":"ask","reply":result}
 
 
 # ── History 포함 Qdrant 실행 ─────────────────────────────────
@@ -328,33 +311,16 @@ def route_query(question: str, history: list[dict]) -> str:
 
 출력: RAG 또는 GENERAL (한 단어만)"""
 
-    try:
-        from google import genai
-        from google.genai import types as gtypes
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        if not api_key:
-            return "rag"
-        client = genai.Client(api_key=api_key, http_options=gtypes.HttpOptions(timeout=10000))
-        resp = client.models.generate_content(model="gemini-3-flash-preview", contents=prompt)
-        result = resp.text.strip().upper()
-        if "GENERAL" in result:
-            return "general"
-        return "rag"
-    except Exception as e:
-        logger.warning("route_query failed, fallback to rag: %s", e)
-        return "rag"
+    from ai_gateway import generate, GatewayError
+    result = generate('query-intent', prompt, timeout=120).strip().upper()
+    if result not in {"RAG","GENERAL"}:
+        raise GatewayError("Invalid query intent schema")
+    return result.lower()
 
 
 def run_general_answer(question: str, history: list[dict]) -> str:
-    """RAG 없이 Gemini 일반 법률 지식으로 답변 (절차·비용·기간·후속 조언)"""
-    from google import genai
-    from google.genai import types as gtypes
-
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        logger.warning("run_general_answer: no GEMINI_API_KEY")
-        return "현재 답변을 생성할 수 없습니다."
-
+    """Gateway generation for general follow-up answers, preserving prompt/history."""
+    from ai_gateway import generate
     system_text = """당신은 한국 법률 AI 상담 어시스턴트입니다.
 대화 맥락을 바탕으로 절차·비용·기간·다음 단계 등 실무적인 법률 정보를 안내합니다.
 법령 원문 검색 없이 일반적인 한국 법률 실무 지식으로 답변 가능한 상황입니다.
@@ -364,24 +330,7 @@ def run_general_answer(question: str, history: list[dict]) -> str:
 - 금액·기간은 사건 복잡도에 따라 달라질 수 있음을 명시하세요
 - 답변 마지막에 "구체적인 법적 판단과 책임은 변호사와 상담하시기 바랍니다."를 추가하세요"""
 
-    client = genai.Client(api_key=api_key, http_options=gtypes.HttpOptions(timeout=30000))
-
-    contents = []
-    for h in (history or [])[-6:]:
-        role = "user" if h["role"] == "user" else "model"
-        contents.append(gtypes.Content(role=role, parts=[gtypes.Part(text=h["content"])]))
-    contents.append(gtypes.Content(role="user", parts=[gtypes.Part(text=question)]))
-
-    try:
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=contents,
-            config=gtypes.GenerateContentConfig(system_instruction=system_text),
-        )
-        return response.text.strip()
-    except Exception as e:
-        logger.warning("run_general_answer Gemini failed: %s", e)
-        return "일시적으로 답변을 생성할 수 없습니다. 잠시 후 다시 시도해주세요."
+    return generate('general-answer', system_text + "\n\n사용자 질문: " + question, history=history)
 
 
 # ── 디스패처 ─────────────────────────────────────────────────

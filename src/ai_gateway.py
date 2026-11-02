@@ -23,7 +23,7 @@ def configured():
     return bool(os.getenv('AI_GATEWAY_TOKEN') or (path and Path(path).is_file()))
 
 
-def generate(task, prompt, *, history=None, json_mode=False, timeout=120):
+def credential():
     token = os.getenv('AI_GATEWAY_TOKEN')
     if not token:
         try:
@@ -32,6 +32,11 @@ def generate(task, prompt, *, history=None, json_mode=False, timeout=120):
             raise GatewayError('AI Gateway credential not configured') from None
     if not token:
         raise GatewayError('AI Gateway credential not configured')
+    return token
+
+
+def generate(task, prompt, *, history=None, json_mode=False, timeout=120):
+    token = credential()
     messages = [{'role': h['role'], 'content': h['content']} for h in (history or [])[-6:]]
     messages.append({'role': 'user', 'content': prompt})
     payload = {'project': 'rag-law', 'task': task, 'messages': messages}

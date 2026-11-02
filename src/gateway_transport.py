@@ -52,10 +52,10 @@ def _request(request):
 
     with requests.post(
         request["url"], headers={"Authorization": f"Bearer {request['token']}"},
-        json=request["payload"], timeout=request["timeout"], stream=True,
+        json=request["payload"], timeout=request["timeout"], stream=True, allow_redirects=False,
     ) as response:
         status = response.status_code
-        if not response.ok:
+        if status != 200:
             return {"status_code": status, "data": None}
         body = bytearray()
         for chunk in response.iter_content(chunk_size=8192):
@@ -69,11 +69,9 @@ def _request(request):
         # Do not send upstream metadata/error bodies back to the parent.
         safe = {}
         if isinstance(data, dict):
-            request_id = data.get("id")
-            if isinstance(request_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
-                safe["id"] = request_id
-            if isinstance(data.get("text"), str):
-                safe["text"] = data["text"]
+            for key in ('id','text','embeddings','results','provider','model','revision','dimensions','usage','duration_ms','ready','routes'):
+                if key in data: safe[key] = data[key]
+
         return {"status_code": status, "data": safe}
 
 

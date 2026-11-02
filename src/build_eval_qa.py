@@ -27,7 +27,6 @@ from collections import defaultdict
 
 import requests
 
-OLLAMA_HOST = "http://localhost:11434"
 OLLAMA_MODEL = "exaone3.5:7.8b"
 RAW_PATH = Path("data/raw/laws_raw.json")
 CHUNKS_PATH = Path("data/processed/chunks.json")
@@ -284,13 +283,9 @@ def build_chunk_index(chunks: list[dict]) -> dict:
 
 
 def ollama_generate(prompt: str, temperature: float = 0.3) -> str:
-    resp = requests.post(
-        f"{OLLAMA_HOST}/api/generate",
-        json={"model": OLLAMA_MODEL, "prompt": prompt,
-              "stream": False, "options": {"temperature": temperature}},
-        timeout=120,
-    )
-    return resp.json()["response"].strip()
+    """Legacy CLI signature; provider/model configuration is Gateway-owned."""
+    from ai_gateway import generate
+    return generate('evaluation',prompt)
 
 
 def select_articles(law: dict, n: int = 12) -> list[dict]:

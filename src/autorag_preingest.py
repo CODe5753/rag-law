@@ -17,12 +17,12 @@ CHUNKS_PATH = Path("data/processed/chunks.json")
 CHROMA_PATH = Path("data/autorag/chroma_store")
 COLLECTION_NAME = "autorag_law"
 EMBED_MODEL = "BAAI/bge-m3"
-EMBED_BATCH = 16       # SentenceTransformer 배치 (VRAM/RAM 고려)
+EMBED_BATCH = 16       # GatewayEmbeddingModel 배치 (VRAM/RAM 고려)
 CHROMA_BATCH = 5000    # ChromaDB add() 배치 (max 5461)
 
 
 def run():
-    from sentence_transformers import SentenceTransformer
+    from gateway_compat import GatewayEmbeddingModel
     import chromadb
 
     CHROMA_PATH.mkdir(parents=True, exist_ok=True)
@@ -62,7 +62,7 @@ def run():
 
     # 3. bge-m3 임베딩
     print(f"\n[임베딩] {EMBED_MODEL} 로드 중...")
-    model = SentenceTransformer(EMBED_MODEL)
+    model = GatewayEmbeddingModel()
 
     texts = [c["text"] for c in new_chunks]
     ids = [c["chunk_id"] for c in new_chunks]

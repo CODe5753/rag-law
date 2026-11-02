@@ -20,7 +20,7 @@ from pathlib import Path
 
 import psutil
 import chromadb
-from sentence_transformers import SentenceTransformer
+from gateway_compat import GatewayEmbeddingModel
 import requests
 
 # ── 설정 ──────────────────────────────────────────────
@@ -28,7 +28,6 @@ CHUNKS_PATH = Path("data/processed/chunks.json")
 CHROMA_PATH = Path(os.getenv("CHROMA_PATH", "./chroma_data"))
 COLLECTION_NAME = "law_chunks_v1"
 EMBED_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 TOP_K = 5
 BATCH_SIZE = 64   # bge-m3 임베딩 배치 크기
@@ -75,15 +74,15 @@ class ResourceMonitor:
 
 # ── 임베딩 ────────────────────────────────────────────
 
-def load_embed_model() -> SentenceTransformer:
+def load_embed_model() -> GatewayEmbeddingModel:
     print(f"[임베딩] 모델 로드: {EMBED_MODEL_NAME}")
     t0 = time.time()
-    model = SentenceTransformer(EMBED_MODEL_NAME)
+    model = GatewayEmbeddingModel()
     print(f"  로드 완료: {time.time() - t0:.1f}s")
     return model
 
 
-def build_index(model: SentenceTransformer, force: bool = False) -> chromadb.Collection:
+def build_index(model: GatewayEmbeddingModel, force: bool = False) -> chromadb.Collection:
     """청크를 임베딩해서 ChromaDB에 저장. 이미 존재하면 재사용."""
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
 
@@ -156,7 +155,7 @@ def build_index(model: SentenceTransformer, force: bool = False) -> chromadb.Col
 
 # ── 검색 ──────────────────────────────────────────────
 
-def retrieve(query: str, model: SentenceTransformer, col: chromadb.Collection, top_k: int = TOP_K) -> list[dict]:
+def retrieve(query: str, model: GatewayEmbeddingModel, col: chromadb.Collection, top_k: int = TOP_K) -> list[dict]:
     """쿼리 임베딩 → ChromaDB 유사도 검색"""
     q_vec = model.encode([query], normalize_embeddings=True).tolist()
     results = col.query(
@@ -194,28 +193,14 @@ def generate(query: str, context_chunks: list[dict]) -> dict:
     user_msg = f"참고 법령:\n{context}\n\n질문: {query}"
 
     t0 = time.time()
-    resp = requests.post(
-        f"{OLLAMA_HOST}/api/chat",
-        json={
-            "model": OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ],
-            "stream": False,
-        },
-        timeout=120,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    answer = data["message"]["content"]
-    latency = round(time.time() - t0, 2)
-    return {"answer": answer, "latency_sec": latency}
+    from ai_gateway import generate as gateway_generate
+    answer=gateway_generate('answer',SYSTEM_PROMPT + "\n\n참고 법령:\n" + context + "\n\n질문: " + query)
+    return {"answer":answer,"latency_sec":round(time.time()-t0,2)}
 
 
 # ── RAG 파이프라인 ─────────────────────────────────────
 
-def ask(query: str, model: SentenceTransformer, col: chromadb.Collection, verbose: bool = True) -> dict:
+def ask(query: str, model: GatewayEmbeddingModel, col: chromadb.Collection, verbose: bool = True) -> dict:
     """단일 쿼리 처리: 검색 → 생성 → 반환"""
     t0 = time.time()
 

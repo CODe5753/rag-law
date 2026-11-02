@@ -8,11 +8,11 @@ Phase 4: LangChain LCEL RAG — naive_rag.py의 LangChain 리팩토링
 
 비교 포인트 (naive_rag.py → langchain_rag.py):
   retrieve()    → Chroma retriever (as_retriever())
-  generate()    → ChatOllama + PromptTemplate + StrOutputParser
+  generate()    → GatewayChatModel + PromptTemplate + StrOutputParser
   ask()         → LCEL chain: retriever | format_docs | prompt | llm | parser
 
 ⚠️ 버전 주의: LangChain 1.2.x (실제 설치된 버전)
-  - langchain-ollama: ChatOllama from langchain_ollama (langchain_community deprecated)
+  - langchain-ollama: GatewayChatModel from langchain_ollama (langchain_community deprecated)
   - Chroma: langchain_chroma (별도 패키지)가 없으면 langchain_community.vectorstores 사용
 """
 
@@ -22,15 +22,14 @@ import time
 from pathlib import Path
 
 import chromadb
-from sentence_transformers import SentenceTransformer
+from gateway_compat import GatewayEmbeddingModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from langchain_ollama import ChatOllama
+from gateway_langchain import GatewayChatModel
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from gateway_langchain import GatewayEmbeddings
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 CHROMA_PATH = Path(os.getenv("CHROMA_PATH", "./chroma_data"))
 EMBED_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
@@ -47,11 +46,7 @@ def build_chain():
     # 1. 임베딩 함수 (LangChain 래퍼로 bge-m3 사용)
     print(f"[임베딩] {EMBED_MODEL_NAME} 로드...")
     t0 = time.time()
-    embeddings = HuggingFaceEmbeddings(
-        model_name=EMBED_MODEL_NAME,
-        model_kwargs={"device": "cpu"},   # MPS/CUDA 가능하면 변경
-        encode_kwargs={"normalize_embeddings": True},
-    )
+    embeddings = GatewayEmbeddings()
     print(f"  완료: {time.time() - t0:.1f}s")
 
     # 2. ChromaDB 벡터스토어 (기존 인덱스 재사용)
@@ -66,11 +61,7 @@ def build_chain():
     )
 
     # 3. LLM
-    llm = ChatOllama(
-        model=OLLAMA_MODEL,
-        base_url=OLLAMA_HOST,
-        temperature=0,
-    )
+    llm = GatewayChatModel()
 
     # 4. 프롬프트 템플릿
     prompt = ChatPromptTemplate.from_messages([

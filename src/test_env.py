@@ -6,25 +6,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def test_ollama():
-    import ollama
-    model = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
+    from ai_gateway import generate
     try:
-        response = ollama.chat(
-            model=model,
-            messages=[{"role": "user", "content": "한 문장으로만 답하세요: 대한민국의 수도는?"}]
-        )
-        answer = response["message"]["content"]
-        print(f"[OK] LLM ({model}): {answer[:80]}")
+        answer=generate('answer','한 문장으로만 답하세요: 대한민국의 수도는?')
+        print(f"[OK] Gateway LLM: {answer[:80]}")
         return True
     except Exception as e:
-        print(f"[FAIL] LLM: {e}")
+        print(f"[FAIL] Gateway LLM: {type(e).__name__}")
         return False
 
 def test_embedding():
-    from sentence_transformers import SentenceTransformer
+    from gateway_compat import GatewayEmbeddingModel
     model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
     try:
-        model = SentenceTransformer(model_name)
+        model = GatewayEmbeddingModel()
         vec = model.encode("대한민국 법령 테스트 문장입니다.")
         print(f"[OK] Embedding ({model_name}): dim={len(vec)}")
         return True
@@ -34,9 +29,9 @@ def test_embedding():
 
 def test_chromadb():
     import chromadb
-    from sentence_transformers import SentenceTransformer
+    from gateway_compat import GatewayEmbeddingModel
     try:
-        model = SentenceTransformer(os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3"))
+        model = GatewayEmbeddingModel()
         client = chromadb.PersistentClient(path=os.getenv("CHROMA_PATH", "./chroma_data"))
         col = client.get_or_create_collection("test")
         doc = "대한민국 법령 테스트 문서입니다."

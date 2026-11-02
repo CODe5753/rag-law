@@ -23,7 +23,6 @@ from pathlib import Path
 
 import requests
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 CHUNKS_PATH = Path("data/processed/chunks.json")
 OUT_DIR = Path("data/autorag")
@@ -37,16 +36,9 @@ random.seed(42)
 
 
 def ollama_call(prompt: str, timeout: int = 60) -> str:
-    try:
-        resp = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        return resp.json().get("response", "").strip()
-    except Exception as e:
-        return ""
+    """Legacy CLI name; only Gateway evaluation task is called."""
+    from ai_gateway import generate
+    return generate('evaluation',prompt,timeout=timeout)
 
 
 def generate_qa_from_chunk(chunk: dict) -> dict | None:

@@ -27,9 +27,8 @@ from collections import defaultdict
 import chromadb
 import requests
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer
+from gateway_compat import GatewayEmbeddingModel
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 CHROMA_PATH = Path(os.getenv("CHROMA_PATH", "./chroma_data"))
 EMBED_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
@@ -118,50 +117,14 @@ def rrf(rankings: list[list[str]], k: int = 60) -> list[tuple[str, float]]:
 _bge_reranker = None
 
 def _get_bge_reranker():
-    global _bge_reranker
-    if _bge_reranker is None:
-        try:
-            from sentence_transformers import CrossEncoder
-            print("[Re-ranker] BAAI/bge-reranker-v2-m3 로드...")
-            _bge_reranker = CrossEncoder("BAAI/bge-reranker-v2-m3")
-            print("  완료")
-        except Exception as e:
-            print(f"  [WARN] BGE Reranker 로드 실패: {e}")
-            _bge_reranker = False
-    return _bge_reranker if _bge_reranker is not False else None
+    return None
 
 
 def rerank(query: str, candidates: list[dict], top_k: int = TOP_K_FINAL) -> list[dict]:
-    """
-    Re-ranking 전략 (우선순위):
-      1. BGE Reranker v2-m3 (한국어 지원 다국어 Cross-encoder) — 권장
-      2. FlashRank ms-marco (영어 전용, 한국어에서 품질 낮음) — 폴백
-      3. 원본 순서 유지 — 최후 폴백
-
-    ⚠️ 트러블슈팅 (2026-04-10):
-      ms-marco-MiniLM-L-12-v2(영어)로 Re-ranking 시 Context Recall 0.70→0.33 급락.
-      원인: 영어 Cross-encoder가 한국어 조문의 관련성을 잘못 채점.
-      해결: bge-reranker-v2-m3 (다국어, 한국어 학습 포함)로 교체.
-    """
-    # 1순위: BGE 다국어 Reranker
-    reranker = _get_bge_reranker()
-    if reranker is not None:
-        pairs = [[query, c["text"]] for c in candidates]
-        scores = reranker.predict(pairs)
-        ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-        return [c for _, c in ranked[:top_k]]
-
-    # 2순위: FlashRank (폴백, 영어 전용)
-    try:
-        from flashrank import Ranker, RerankRequest
-        ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir="/tmp/flashrank")
-        passages = [{"id": i, "text": c["text"]} for i, c in enumerate(candidates)]
-        request = RerankRequest(query=query, passages=passages)
-        results = ranker.rerank(request)
-        return [candidates[r["id"]] for r in results[:top_k]]
-    except Exception as e:
-        print(f"  [WARN] FlashRank 실패: {e} → 원본 순서")
-        return candidates[:top_k]
+    if not candidates:return []
+    from model_gateway import rerank as gateway_rerank
+    rows=gateway_rerank(query,[c["text"] for c in candidates],top_n=min(top_k,len(candidates)))
+    return [candidates[r["index"]] for r in rows]
 
 
 # ── Multi-query 쿼리 확장 ──────────────────────────────
@@ -174,25 +137,17 @@ def expand_query(query: str) -> list[str]:
 원본 질문: {query}
 
 3가지 변형:"""
-    try:
-        resp = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        lines = [l.strip() for l in resp.json()["response"].strip().split("\n") if l.strip()]
-        variants = lines[:3]
-        return [query] + variants  # 원본 포함
-    except Exception as e:
-        print(f"  [WARN] 쿼리 확장 실패: {e}")
-        return [query]
+    from ai_gateway import generate
+    raw=generate('rewrite',prompt,timeout=120)
+    variants=[line.strip() for line in raw.splitlines() if line.strip()][:3]
+    if not variants:raise ValueError("Empty query expansion")
+    return [query]+variants
 
 
 # ── Hybrid Search 파이프라인 ──────────────────────────
 
 class AdvancedRAG:
-    def __init__(self, chunks: list[dict], embed_model: SentenceTransformer, col):
+    def __init__(self, chunks: list[dict], embed_model: GatewayEmbeddingModel, col):
         self.chunks = chunks
         self.chunk_id_to_idx = {c["chunk_id"]: i for i, c in enumerate(chunks)}
         self.embed_model = embed_model
@@ -272,20 +227,9 @@ def generate(query: str, context_chunks: list[dict]) -> dict:
         for c in context_chunks
     )
     t0 = time.time()
-    resp = requests.post(
-        f"{OLLAMA_HOST}/api/chat",
-        json={
-            "model": OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"참고 법령:\n{context}\n\n질문: {query}"},
-            ],
-            "stream": False,
-        },
-        timeout=120,
-    )
-    resp.raise_for_status()
-    return {"answer": resp.json()["message"]["content"], "latency_sec": round(time.time() - t0, 2)}
+    from ai_gateway import generate as gateway_generate
+    answer=gateway_generate('answer',SYSTEM_PROMPT + "\n\n참고 법령:\n" + context + "\n\n질문: " + query)
+    return {"answer":answer,"latency_sec":round(time.time()-t0,2)}
 
 
 def ask(query: str, rag: AdvancedRAG, use_multiquery: bool = False, verbose: bool = True) -> dict:

@@ -31,11 +31,8 @@ import requests
 from rank_bm25 import BM25Okapi
 import embedding_backend
 
-# sentence_transformers/torch는 local 모드일 때만 import (메모리 절감)
-if not embedding_backend.is_remote_backend():
-    from sentence_transformers import SentenceTransformer
-else:
-    SentenceTransformer = None
+# Model execution is Gateway-only.
+GatewayEmbeddingModel = None
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
@@ -43,8 +40,6 @@ QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 EMBED_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 OUT_DIR = Path("data/processed")
-RERANKER_BACKEND = os.getenv("RERANKER_BACKEND", "local")  # "remote" | "local"
-RERANKER_HOST = os.getenv("RERANKER_HOST", "http://localhost:11435")
 
 BM25_CACHE_PATH = Path("data/processed/bm25_cache.pkl")
 
@@ -125,30 +120,13 @@ def _get_kiwi():
 
 
 def _get_bge_reranker():
-    global _bge_reranker
-    if _bge_reranker is None:
-        try:
-            from sentence_transformers import CrossEncoder
-            print("[Re-ranker] BAAI/bge-reranker-v2-m3 로드...")
-            _bge_reranker = CrossEncoder("BAAI/bge-reranker-v2-m3")
-            print("  완료")
-        except Exception as e:
-            print(f"  [WARN] BGE Reranker 로드 실패: {e}")
-            _bge_reranker = False
-    return _bge_reranker if _bge_reranker is not False else None
+    return None  # Scores are obtained only through Gateway reranking.
 
 
 # ── 임베딩 모델 ─────────────────────────────────────────
 
 def load_embed_model():
-    if embedding_backend.is_remote_backend():
-        print(f"[임베딩] 원격 백엔드 사용: {embedding_backend.EMBEDDING_BACKEND}")
-        return None
-    print(f"[임베딩] 모델 로드: {EMBED_MODEL_NAME}")
-    t0 = time.time()
-    model = SentenceTransformer(EMBED_MODEL_NAME)
-    print(f"  로드 완료: {round(time.time()-t0, 1)}s")
-    return model
+    return None  # Native callers use embedding_backend through Gateway.
 
 
 # ── BM25 인덱스 (Qdrant 스크롤 기반) ───────────────────────
@@ -285,34 +263,14 @@ def rrf(rankings: list[list[str]], k: int = 60) -> list[tuple[str, float]]:
 # ── Re-ranking ──────────────────────────────────────────
 
 def rerank(query: str, candidates: list[dict], top_k: int = TOP_K_FINAL) -> list[dict]:
-    if RERANKER_BACKEND == "remote":
-        return _rerank_remote(query, candidates, top_k)
-
-    reranker = _get_bge_reranker()
-    if reranker:
-        pairs = [[query, c["text"]] for c in candidates]
-        scores = reranker.predict(pairs)
-        ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-        return [{**c, "reranker_score": round(float(s), 4)} for s, c in ranked[:top_k]]
-    print("  [WARN] BGE Reranker 미사용 — LLM 채점으로 전환됩니다 (레이턴시 증가)")
-    return sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)[:top_k]
+    if not candidates: return []
+    from model_gateway import rerank as gateway_rerank
+    rows = gateway_rerank(query, [c["text"] for c in candidates], top_n=min(top_k,len(candidates)))
+    return [{**candidates[r["index"]], "reranker_score": r["relevance_score"]} for r in rows]
 
 
 def _rerank_remote(query: str, candidates: list[dict], top_k: int) -> list[dict]:
-    """macOS Reranker 서비스(host.lima.internal:11435)로 점수 요청."""
-    try:
-        resp = requests.post(
-            f"{RERANKER_HOST}/rerank",
-            json={"query": query, "documents": [c["text"] for c in candidates]},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        scores = resp.json()["scores"]
-        ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-        return [{**c, "reranker_score": round(float(s), 4)} for s, c in ranked[:top_k]]
-    except Exception as e:
-        print(f"  [WARN] Remote reranker 실패: {e} — LLM 채점으로 전환")
-        return sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)[:top_k]
+    return rerank(query,candidates,top_k)
 
 
 # ── 컨텍스트 포맷 ────────────────────────────────────────
@@ -346,10 +304,7 @@ def hybrid_retrieve(
     bm25=None이면 BM25 미준비 상태 — 벡터 전용으로 fallback.
     """
     # 벡터 검색
-    if model is None:
-        q_vec = embedding_backend.encode_query(query)
-    else:
-        q_vec = model.encode([query], normalize_embeddings=True).tolist()[0]
+    q_vec = embedding_backend.encode_query(query)
     vector_results = search_all_collections(q_vec, top_k=top_k_candidate)
 
     if bm25 is None or chunk_ids is None:
@@ -404,44 +359,8 @@ def generate(question: str, retrieved: list[dict], history: list[dict] | None = 
 # ── Gemini 답변 생성 ─────────────────────────────────────
 
 def generate_with_gemini(question: str, retrieved: list[dict], history: list[dict] | None = None) -> dict:
-    """Gemini API로 최종 법률 정보 답변 생성. GEMINI_API_KEY 없으면 Gateway fallback."""
-    if not os.getenv("GEMINI_API_KEY", ""):
-        return generate(question, retrieved, history)
-    try:
-        from google import genai
-        from google.genai import types as gtypes
-        api_key = os.getenv("GEMINI_API_KEY", "")
-
-        client = genai.Client(
-            api_key=api_key,
-            http_options=gtypes.HttpOptions(timeout=30000),
-        )
-
-        ctx = "\n\n".join(_format_chunk(r) for r in retrieved)
-        system_text = SYSTEM_PROMPT + f"\n\n[참고 법령·판례 자료]\n{ctx}"
-
-        contents = []
-        if history:
-            for h in history[-6:]:
-                role = "user" if h["role"] == "user" else "model"
-                contents.append(gtypes.Content(role=role, parts=[gtypes.Part(text=h["content"])]))
-        contents.append(gtypes.Content(role="user", parts=[gtypes.Part(text=question)]))
-
-    except Exception:
-        return generate(question, retrieved, history)
-
-    t0 = time.time()
-    try:
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=contents,
-            config=gtypes.GenerateContentConfig(system_instruction=system_text),
-        )
-        answer = response.text.strip()
-    except Exception as e:
-        logger.warning("generate_with_gemini failed; using AI Gateway")
-        return generate(question, retrieved, history)
-    return {"answer": answer, "latency_sec": round(time.time() - t0, 1)}
+    """Compatibility name for existing callers; generation is Gateway-only."""
+    return generate(question,retrieved,history)
 
 
 # ── 평가 ────────────────────────────────────────────────

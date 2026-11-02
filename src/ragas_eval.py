@@ -10,7 +10,7 @@ Phase 3: RAGAS 평가 — Naive RAG 기준선 측정
 ⚠️ 트러블슈팅 히스토리:
   - RAGAS 0.4.x는 0.1.x와 API 완전 다름. SingleTurnSample + EvaluationDataset 사용.
   - LLM-as-Judge로 Ollama EXAONE 사용 → 한국어 법령 평가에 적합.
-  - OllamaEmbeddings는 Answer Relevancy 계산에만 사용.
+  - GatewayEmbeddings는 Answer Relevancy 계산에만 사용.
 """
 
 import json
@@ -26,14 +26,13 @@ from ragas.metrics import (
 )
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
-from langchain_community.chat_models import ChatOllama
-from langchain_community.embeddings import OllamaEmbeddings
+from gateway_langchain import GatewayChatModel
+from gateway_langchain import GatewayEmbeddings
 
 import chromadb
-from sentence_transformers import SentenceTransformer
+from gateway_compat import GatewayEmbeddingModel
 import os
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
 CHROMA_PATH = Path(os.getenv("CHROMA_PATH", "./chroma_data"))
 EMBED_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
@@ -148,15 +147,8 @@ def run_ragas(dataset: EvaluationDataset) -> dict:
     print("\n[RAGAS 평가 시작]")
     print(f"  Judge LLM: {OLLAMA_MODEL} (Ollama)")
 
-    llm = LangchainLLMWrapper(ChatOllama(
-        model=OLLAMA_MODEL,
-        base_url=OLLAMA_HOST,
-        temperature=0,
-    ))
-    embeddings = LangchainEmbeddingsWrapper(OllamaEmbeddings(
-        model=OLLAMA_MODEL,
-        base_url=OLLAMA_HOST,
-    ))
+    llm = LangchainLLMWrapper(GatewayChatModel(task="evaluation"))
+    embeddings = LangchainEmbeddingsWrapper(GatewayEmbeddings())
 
     metrics = [
         Faithfulness(llm=llm),

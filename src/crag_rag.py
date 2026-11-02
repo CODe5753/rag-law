@@ -30,11 +30,8 @@ import requests
 from langgraph.graph import StateGraph, END
 import embedding_backend
 
-# sentence_transformers/torch는 local 모드일 때만 import (메모리 절감)
-if not embedding_backend.is_remote_backend():
-    from sentence_transformers import SentenceTransformer
-else:
-    SentenceTransformer = None
+# Model execution is Gateway-only.
+GatewayEmbeddingModel = None
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 QDRANT_PATH = Path("./qdrant_data")
@@ -105,15 +102,7 @@ _bge_reranker = None
 
 
 def _get_model():
-    global _model
-    if embedding_backend.is_remote_backend():
-        return None
-    if _model is None:
-        print(f"[임베딩] 모델 로드: {EMBED_MODEL_NAME}")
-        t0 = time.time()
-        _model = SentenceTransformer(EMBED_MODEL_NAME)
-        print(f"  완료: {round(time.time()-t0, 1)}s")
-    return _model
+    return None
 
 
 def _get_chunks():
@@ -143,17 +132,7 @@ def _get_bm25():
 
 
 def _get_bge_reranker():
-    global _bge_reranker
-    import os
-    if os.getenv("RERANKER_BACKEND", "local") == "remote":
-        return None  # qdrant_rag.rerank()이 remote 서비스 호출
-    if _bge_reranker is None:
-        try:
-            from sentence_transformers import CrossEncoder
-            _bge_reranker = CrossEncoder("BAAI/bge-reranker-v2-m3")
-        except Exception:
-            _bge_reranker = False
-    return _bge_reranker if _bge_reranker is not False else None
+    return None  # Scores are obtained only through Gateway reranking.
 
 
 from ai_gateway import generate as gateway_generate, grade as gateway_grade, GatewayError
